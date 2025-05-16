@@ -1,0 +1,12 @@
+__pycache__
+dist/*
+Docs/
+*.ipynb
+*.dna
+*.pdf
+*.txt
+*.json
+*.zip
+*.jpg
+*.bin
+/*.py
