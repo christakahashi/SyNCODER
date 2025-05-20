@@ -78,3 +78,28 @@ def test_dna_to_bytes():
   generated_dna = "".join(full_alphabet[dna_baseN_with_alt])
  
   assert generated_dna == DNA
+
+def test_inserts():
+  coder = codec.BaseNBlockCodec(inner_alphabet_size=32,inner_d=5,inner_n=29,n_strands=2000,n_redundant_strands=100)
+  n_inserts = 200
+  insert = "GCTCTTCCCACCACCATTGCCTTCTTCTTG"
+  insert_bytes, imask = codec.dna_to_bytes(insert,codec._default_b32_alphabet,codec._default_b32_alphabet_alt)
+  total_ibytes = len(insert_bytes)*n_inserts
+  data_size = coder.block_capacity_bytes - total_ibytes 
+
+
+  test_data = np.random.randint(0,255,data_size,dtype=np.uint8).tobytes()
+
+  inserted_data = codec.insert_bytes(test_data,insert_bytes,coder.data_chunk_size,n_inserts)
+  assert len(inserted_data)  == coder.block_capacity_bytes
+
+  enc_d = coder.encode(inserted_data)
+  data_decodec,__oe,__oer,__ie = coder.decode(enc_d)
+  assert data_decodec == inserted_data
+
+  test_dna_out = codec.b32_to_DNA_optimize(enc_d,codec._default_b32_alphabet,codec._default_b32_alphabet_alt,mask=imask,nmasked=n_inserts)
+  test_dna = [x[0] for x in test_dna_out]
+  for strand in test_dna[:n_inserts]:
+    assert strand.decode().startswith(insert)
+
+  assert codec.dna_to_bN(test_dna,codec._default_b32_alphabet,codec._default_b32_alphabet_alt) == enc_d
