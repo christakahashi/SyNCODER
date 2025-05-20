@@ -1,6 +1,10 @@
+#some temp and build directories
 __pycache__
 dist/*
 Docs/
+data/
+out/
+#ingnore data files that may be used or generated during dev.
 *.ipynb
 *.dna
 *.pdf
@@ -9,4 +13,5 @@ Docs/
 *.zip
 *.jpg
 *.bin
+#any actual py files are in src.  anything in root is supposed to just for development.
 /*.py
