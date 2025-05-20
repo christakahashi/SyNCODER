@@ -379,14 +379,20 @@ def longest_binder(a:str,b:str):
 
 
 
-def b32_to_DNA_optimize(file_data:list[ArrayLike],words:list[str], alternate_words:list[str], mask:Union[ArrayLike,None]=None, penalty_fn:Union[Callable[[str],int],None]=None)->list[Tuple[bytes,int]]:
+def b32_to_DNA_optimize(file_data:list[ArrayLike],words:list[str], alternate_words:list[str], mask:Union[ArrayLike,None]=None, nmasked=-1, penalty_fn:Union[Callable[[str],int],None]=None)->list[Tuple[bytes,int]]:
   """ 
     TODO: rename to bN_to_DNA_optimize, and add test.
     file_data: 2d list of integral types (symbols)
     mask: list of ints. 0 for word, 1 for alternate word, -1 for don't care.  None for no mask.
+    nmasked: number of masked words.  -1 for all.
     penalty_fn: function that takes a DNA sequence and returns a score.  penalty_fn(DNA_seq:str)->int
   """
-  return [b32_to_DNA_optimize_single(x,words,alternate_words,penalty_fn=penalty_fn) for x in file_data]
+  if nmasked<0: #mask all
+    return [b32_to_DNA_optimize_single(x,words,alternate_words,mask,penalty_fn=penalty_fn) for x in file_data]
+  else:
+      masked_part = [b32_to_DNA_optimize_single(x,words,alternate_words,mask,penalty_fn=penalty_fn) for x in file_data[0:nmasked]]
+      unmasked_part = [b32_to_DNA_optimize_single(x,words,alternate_words,mask=None,penalty_fn=penalty_fn) for x in file_data[nmasked:]]
+      return masked_part + unmasked_part
 
 
 def b32_to_DNA_optimize_single(strand_data:ArrayLike, words:list[str], alternate_words:list[str], mask:Union[ArrayLike,None]=None ,penalty_fn=None)->Tuple[bytes,int]:
