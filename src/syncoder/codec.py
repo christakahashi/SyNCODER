@@ -2,6 +2,7 @@ import os
 import struct
 import itertools
 import logging
+import typing
 from typing import Optional,Union, Callable, Tuple  #requires python 3.5 or later
 
 
@@ -18,7 +19,7 @@ import reedsolo
 
 
 lipsum = b"Lorem ipsum dolor sit amet, consectetuer adipiscing elit. Aenean commodo ligula eget dolor. Aenean massa. Cum sociis natoque penatibus et magnis dis parturient montes, nascetur ridiculus mus. Donec quam felis, ultricies nec, pellentesque eu, pretium quis, sem. Nulla consequat massa quis enim. Donec pede justo, fringilla vel, aliquet nec, vulputate eget, arcu. In enim justo, rhoncus ut, imperdiet a, venenatis vitae, justo. Nullam dictum felis eu pede mollis pretium. Integer tincidunt. Cras dapibus. Vivamus elementum semper nisi. Aenean vulputate eleifend tellus. Aenean leo ligula, porttitor eu, consequat vitae, eleifend ac, enim. Aliquam lorem ante, dapibus in, viverra quis, feugiat a, tellus. Phasellus viverra nulla ut metus varius laoreet. Quisque rutrum. Aenean imperdiet. Etiam ultricies nisi vel augue. Curabitur ullamcorper ultricies nisi. Nam eget dui. Etiam rhoncus. Maecenas tempus, tellus eget condimentum rhoncus, sem quam semper libero, sit amet adipiscing sem neque sed ipsum." #cspell:disable-line
-  
+
 
 def _int_to_baseN(n:int,base:int,length:int=-1)->list[int]:
     """Converts an integer to a base N number in little endian order.
@@ -274,18 +275,20 @@ class BaseNBlockCodec:
         """
         # inner decode
         ## TODO: handle erasures in inner code.
-        chunked_data = [self.inner_coder.decode(d,errors=True) for d in data]
+
+        # I'm sure it'll be a (FieldArray,int) ----------------V
+        chunked_data:list[Tuple[galois.FieldArray,int]] = [self.inner_coder.decode(d,errors=True) for d in data] #type:ignore
         
 
         # handle outer decode
-        ordered_chunks = [None] * self.n_strands
-        chunk_errors = [-1] * self.n_strands
+        ordered_chunks:list[bytes|None] = [None] * self.n_strands
+        chunk_errors:list[int] = [-1] * self.n_strands
         for chunk in chunked_data:
             chunk_int = _baseN_to_int(chunk[0].tolist(), self.inner_coder.field.order)
             chunk_index = chunk_int >> (self.data_chunk_size * 8) - index_start
             _mask = (2 ** (self.data_chunk_size * 8)) - 1
             chunk_int = chunk_int & _mask
-            chunk_bytes = chunk_int.to_bytes(self.data_chunk_size, 'little')
+            chunk_bytes:bytes = chunk_int.to_bytes(self.data_chunk_size, 'little')
             #print(chunk_index)
             try:
               ordered_chunks[chunk_index] = chunk_bytes
@@ -299,6 +302,8 @@ class BaseNBlockCodec:
             if c is None:
                 erasures.append(i)  # remember where erasure is
                 ordered_chunks[i] = b'\x00' * self.data_chunk_size  # fill in erasures with zeros
+        #we're all bytes now, but the checker can't tell that.
+        ordered_chunks_bytes:list[bytes] = typing.cast(list[bytes],ordered_chunks)
 
         if self.outer_coder.c_exp==8:
             outer_dtype = np.uint8
@@ -306,7 +311,7 @@ class BaseNBlockCodec:
             outer_dtype = np.uint16
         else:
             raise ValueError("Unsupported outer code byte size.")
-        data_np_encoded = np.array([np.frombuffer(c, dtype=outer_dtype) for c in ordered_chunks]).transpose()
+        data_np_encoded = np.array([np.frombuffer(c, dtype=outer_dtype) for c in ordered_chunks_bytes]).transpose()
         data_decoded_results = [self.outer_coder.decode(dc, erase_pos=erasures) for dc in data_np_encoded]
         data_decoded_chunks = np.array([d[0] for d in data_decoded_results],dtype=outer_dtype).transpose()
         data_decoded = data_decoded_chunks.flatten().tobytes()
@@ -405,10 +410,10 @@ def b32_to_DNA_optimize_single(strand_data:ArrayLike, words:list[str], alternate
     mask = np.zeros(len(strand_data),dtype=np.uint8)
     mutable_ind = np.arange(len(strand_data))
     
-  words = np.array(list(zip(words,alternate_words)),dtype="S")
+  words_lookup = np.array(list(zip(words,alternate_words)),dtype="S")
   picks = np.zeros(len(strand_data),dtype=np.uint8)
   picks[0:len(mask)] = mask
-  dna_seq = b"".join(words[strand_data,picks])
+  dna_seq = b"".join(words_lookup[strand_data,picks])
   if penalty_fn is None:
      return dna_seq,0
   score = penalty_fn(dna_seq)
@@ -423,7 +428,7 @@ def b32_to_DNA_optimize_single(strand_data:ArrayLike, words:list[str], alternate
     for i in mutable_ind:
       new_picks = picks.copy()
       new_picks[i] = not new_picks[i]
-      new_dna_seq = b"".join(words[strand_data,new_picks])
+      new_dna_seq = b"".join(words_lookup[strand_data,new_picks])
       new_score = penalty_fn(new_dna_seq)
       if new_score < iteration_best_score:
         iteration_best_picks = new_picks
@@ -465,11 +470,11 @@ def b32_to_DNA(file_data:list[list[int]],words:list[str], alternate_words:list[s
         dna.append(_s)
     return dna
 
-def dna_to_bN(dna: Union[list[str],list[bytes]] ,words:list[str], alternate_words:list[str])->list[int]:
-    """ takes a list of strings and converts them to a list of base N ints"""
+def dna_to_bN(dna: Union[list[str],list[bytes]] ,words:list[str], alternate_words:list[str])->list[list[int]]:
+    """ takes a list of strings and converts them to a list of lists of base N ints"""
 
-    if isinstance(dna[0],bytes):
-        dna = [x.decode() for x in dna]
+    if isinstance(dna[0],bytes): #assume the rest are bytes too.
+        dna = [x.decode() for x in typing.cast(list[bytes],dna)]
 
     wordlen = len(words[0])
     #build the reverse lookup table
@@ -479,16 +484,16 @@ def dna_to_bN(dna: Union[list[str],list[bytes]] ,words:list[str], alternate_word
         bNlut[alternate_words[ind]] = ind
 
 
-    bNdatalist = []
+    bNdatalist:list[list[int]] = []
     for d in dna:
-        bNdata = []
+        bNdata:list[int] = []
         for ind in range(0,len(d),wordlen):
             w = d[ind:ind+wordlen] 
             bNdata.append(bNlut[w])
         bNdatalist.append(bNdata)
     return bNdatalist
 
-def dna_to_b32(dna: Union[list[str],list[bytes]] ,words:list[str], alternate_words:list[str])->list[int]:
+def dna_to_b32(dna: Union[list[str],list[bytes]] ,words:list[str], alternate_words:list[str])->list[list[int]]:
     assert len(words) == 32
     return dna_to_bN(dna,words,alternate_words)
 
@@ -610,15 +615,21 @@ def remove_bytes(data:bytes, insert:int|bytes, chunk_len:int, num_inserts:int) -
     Returns:
         bytes: The modified byte array with the inserted bytes removed.
     """
+    have_insert_seq = False
     if isinstance(insert,bytes):
         insert_len = len(insert)
+        have_insert_seq = True
+    elif isinstance(insert,int):
+        if insert <= 0:
+            raise ValueError("insert must be a positive integer")   
+        insert_len:int = insert
     else:
-        insert = None
+        raise ValueError("insert must be a bytes or int")
     
     data = bytearray(data)
     for i in reversed(range(num_inserts)):
         ins_index = i * chunk_len
-        if insert is not None:
+        if have_insert_seq:
             if data[ins_index:ins_index + insert_len] != insert:
                 raise ValueError("insert bytes do not match bytes to be removed")
         del data[ins_index:ins_index + insert_len]
