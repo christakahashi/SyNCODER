@@ -4,7 +4,7 @@ import random
 import numpy as np
 from itertools import product
 
-import syncoder.codec as codec
+import syncoder as codec
 
 #logging.basicConfig(level=logging.DEBUG,stream=sys.stdout)
 #numba_logger = logging.getLogger('numba')
@@ -54,6 +54,8 @@ def test_dna_to_bN():
   assert np.array_equal(data, decode_data)
 
 def test_dna_to_bytes():
+  _int_to_baseN = codec.codec._int_to_baseN
+
   #TODO: adapt to workwith not b32 too.
   #answer = [64, 79, 231, 126, 228, 124, 3]
   alphabet =codec._default_b32_alphabet
@@ -70,7 +72,7 @@ def test_dna_to_bytes():
 
   dna_bytes, mask = codec.dna_to_bytes(DNA,alphabet,alphabet_alt)
   
-  dna_baseN = codec._int_to_baseN(int.from_bytes(dna_bytes,"little"),len(alphabet))
+  dna_baseN = _int_to_baseN(int.from_bytes(dna_bytes,"little"),len(alphabet))
   assert dna_baseN == answer32
 
   _t = np.array(dna_baseN)
