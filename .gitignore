@@ -13,5 +13,6 @@ out/
 *.zip
 *.jpg
 *.bin
+.pypirc
 #any actual py files are in src.  anything in root is supposed to just for development.
 /*.py

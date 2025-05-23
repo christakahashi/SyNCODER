@@ -28,7 +28,7 @@ def test_coded_to_bases():
   #TODO: test optimize too
 
   test_encoded_data = np.random.randint(0,32,(10,31),dtype=np.uint8)
-  DNA_with_scores = codec.b32_to_DNA_optimize(test_encoded_data,codec._default_b32_alphabet,codec._default_b32_alphabet_alt)
+  DNA_with_scores = codec.b32_to_DNA_optimize(test_encoded_data,codec._default_b32_alphabet,codec._default_b32_alphabet_alt) # type: ignore
   DNA = [x[0] for x in DNA_with_scores]
   test_decoded_data  = codec.dna_to_b32(DNA,codec._default_b32_alphabet,codec._default_b32_alphabet_alt) 
   print(test_encoded_data.flatten())
@@ -99,7 +99,7 @@ def test_inserts():
   data_decodec,__oe,__oer,__ie = coder.decode(enc_d)
   assert data_decodec == inserted_data
 
-  test_dna_out = codec.b32_to_DNA_optimize(enc_d,codec._default_b32_alphabet,codec._default_b32_alphabet_alt,mask=imask,nmasked=n_inserts)
+  test_dna_out = codec.b32_to_DNA_optimize(enc_d,codec._default_b32_alphabet,codec._default_b32_alphabet_alt,mask=imask,nmasked=n_inserts) # type: ignore
   test_dna = [x[0] for x in test_dna_out]
   for strand in test_dna[:n_inserts]:
     assert strand.decode().startswith(insert)

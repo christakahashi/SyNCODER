@@ -1,6 +1,11 @@
 [project]
 name = "syncoder"
-version = "0.0.1a1"
+dynamic = ["version"]
+dependencies = [
+    "numpy>=1.20",
+    "galois>=0.4",
+    "reedsolo>=1.7"
+]
 description = "A codec for DNA data storage"
 authors = [
     { name="Christopher Takahashi", email="cnt@uw.edu" }
@@ -25,3 +30,6 @@ build-backend = "hatchling.build"
 testpaths = [
     "tests"
 ]
+
+[tool.hatch.version]
+path = "src/syncoder/__init__.py"

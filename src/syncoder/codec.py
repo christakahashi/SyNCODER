@@ -386,7 +386,7 @@ def b32_to_DNA_optimize(file_data:list[ArrayLike],words:list[str], alternate_wor
     mask: list of ints. 0 for word, 1 for alternate word, -1 for don't care.  None for no mask.
     nmasked: number of masked words.  -1 for all.
     penalty_fn: function that takes a DNA sequence and returns a score.  penalty_fn(DNA_seq:str)->int
-  """
+  """      
   if nmasked<0: #mask all
     return [b32_to_DNA_optimize_single(x,words,alternate_words,mask,penalty_fn=penalty_fn) for x in file_data]
   else:
@@ -398,7 +398,6 @@ def b32_to_DNA_optimize(file_data:list[ArrayLike],words:list[str], alternate_wor
 def b32_to_DNA_optimize_single(strand_data:ArrayLike, words:list[str], alternate_words:list[str], mask:Union[ArrayLike,None]=None ,penalty_fn=None)->Tuple[bytes,int]:
   """
     TODO: rename to bN_to_DNA_optimize_single
-    TODO: add mask support.
     strand_data: 1d list of integral types
     mask: list of ints. 0 for word, 1 for alternate word, -1 for don't care.  None for no mask.
   """
