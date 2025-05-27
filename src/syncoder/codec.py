@@ -142,6 +142,7 @@ class BaseNBlockCodec:
         #                                        ^ = self.index_bits <-- in bits not bytes.
         #  note: actual k remains alphabet_size-1, but the code is shorted (0 padded) to inner_n symbols. 
         k = inner_n - (inner_d - 1) 
+        self.inner_k = k
         q = self.inner_coder.field.order
 
         #number of bytes needed to store the index
@@ -248,7 +249,7 @@ class BaseNBlockCodec:
             chunk += index<<(self.data_chunk_size*8)
             index += 1
             #but.. we still need to pad out the symbol stream.
-            chunk = _int_to_baseN(chunk,self.inner_coder.field.order,length=self.inner_coder.k)
+            chunk = _int_to_baseN(chunk,self.inner_coder.field.order,length=self.inner_k)  
             chunks.append(chunk)
 
         #apply inner code

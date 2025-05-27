@@ -23,6 +23,8 @@ def test_encode_decode():
 
   out_text = c.decode( coded )[0]
   assert in_text == out_text
+  #check inner_n is causing the correct number of bases
+  assert len(coded[0]) == 30 
 
 def test_coded_to_bases():
   #TODO: test optimize too
