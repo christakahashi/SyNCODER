@@ -4,7 +4,8 @@ import random
 import numpy as np
 from itertools import product
 
-import syncoder as codec
+import syncoder
+codec = syncoder
 
 #logging.basicConfig(level=logging.DEBUG,stream=sys.stdout)
 #numba_logger = logging.getLogger('numba')
@@ -91,7 +92,6 @@ def test_inserts():
   total_ibytes = len(insert_bytes)*n_inserts
   data_size = coder.block_capacity_bytes - total_ibytes 
 
-
   test_data = np.random.randint(0,255,data_size,dtype=np.uint8).tobytes()
 
   inserted_data = codec.insert_bytes(test_data,insert_bytes,coder.data_chunk_size,n_inserts)
@@ -107,3 +107,11 @@ def test_inserts():
     assert strand.decode().startswith(insert)
 
   assert codec.dna_to_bN(test_dna,codec._default_b32_alphabet,codec._default_b32_alphabet_alt) == enc_d
+
+def test_compute_n_strands():
+  nbytes = 26600
+  ns = syncoder.compute_num_strands(nbytes,32,5,29,100)
+  data = np.random.randint(0,255,nbytes,dtype=np.uint8).tobytes()
+  coder = codec.BaseNBlockCodec(inner_alphabet_size=32,inner_d=5,inner_n=29,n_strands=ns,n_redundant_strands=100)
+  enc_d = coder.encode(data)
+  assert len(enc_d) == ns

@@ -62,15 +62,39 @@ def _baseN_to_int(digits: list[int], base: int) -> int:
         n = n*base + d
     return n
 
-def computeNStrands(nbytes:int, 
+def compute_num_strands(nbytes:int, 
                  inner_alphabet_size:int=32, 
                  inner_d:int=5, 
                  inner_n:Optional[int]=None, 
                  n_redundant_strands:int=5)->int:
-    
+    """
+    Computes the number of strands needed to encode a given number of bytes.
+
+    Args:
+        nbytes (int): The number of bytes to encode.
+        inner_alphabet_size (int, optional): Size of the inner alphabet (must be a prime power). Defaults to 32.
+        inner_d (int, optional): Inner codeword distance. Defaults to 5.
+        inner_n (Optional[int], optional): Number of symbols in inner block (n < inner_alphabet_size). Defaults to inner_alphabet_size-1.
+        n_redundant_strands (int, optional): Number of redundant strands. Defaults to 5.
+
+    Returns:
+        int: The minimum number of strands required to encode the given number of bytes.
+    """
     #TODO: do some algebra to solve for n_strands.
-    min_m=1
-    max_m=2**16-1
+    if inner_n is None:
+        inner_n = inner_alphabet_size - 1
+    
+    k = inner_n - (inner_d - 1)
+    bits_per_strand_max = np.ceil(np.log2(inner_alphabet_size))*k
+    bits_per_strand_min = np.floor(np.log2(inner_alphabet_size))*k-16 #16 bits for largest possible index.
+    #min_m=1
+    min_m = int( np.floor(nbytes*8 / bits_per_strand_max + n_redundant_strands) )
+    #max_m=2**16-1
+    max_m = int( np.ceil(nbytes*8 / bits_per_strand_min + n_redundant_strands) )
+    
+    _logger = logging.getLogger()
+    _t = _logger.getEffectiveLevel()
+    _logger.setLevel(logging.ERROR) #suppress debug messages
     while min_m<max_m:
         mid = (min_m+max_m)//2
         codec = BaseNBlockCodec(inner_alphabet_size=inner_alphabet_size,
@@ -82,14 +106,8 @@ def computeNStrands(nbytes:int,
             min_m = mid+1
         else:
             max_m = mid
+    _logger.setLevel(_t) #restore logger level
     return min_m
-    #index_bits = np.ceil(np.log2(n_strands)).astype(int)
-    #k = inner_n - (inner_d - 1)
-    #data_chunk_size = int(k*np.log2(inner_alphabet_size)-index_bits) // 8
-    #block_capacity_bytes = data_chunk_size*(n_strands - n_redundant_strands)
-
-
-
 
 class BaseNBlockCodec:
     def __init__(self, 
