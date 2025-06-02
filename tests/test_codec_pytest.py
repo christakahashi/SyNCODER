@@ -115,3 +115,12 @@ def test_compute_n_strands():
   coder = codec.BaseNBlockCodec(inner_alphabet_size=32,inner_d=5,inner_n=29,n_strands=ns,n_redundant_strands=100)
   enc_d = coder.encode(data)
   assert len(enc_d) == ns
+
+def test_nonzero_index():
+  coder = syncoder.BaseNBlockCodec(inner_alphabet_size=32,inner_d=5,inner_n=31,n_strands=10,n_redundant_strands=3,max_strand_index=3000)
+  data_size = coder.block_capacity_bytes
+
+  test_data = np.random.randint(0,255,data_size,dtype=np.uint8).tobytes()
+  enc_d = coder.encode(test_data,index_start=2500)
+  ded_d = coder.decode(enc_d,index_start=2500)
+  assert ded_d[0] == test_data

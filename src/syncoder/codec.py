@@ -128,8 +128,6 @@ class BaseNBlockCodec:
             n_strands (int): Number of "strands" stored by this codec including redundant strands.
             max_strand_index (Optional[int]): Maximum guaranteed index. Default: n_strands.
         """
-        #TODO: handle more than 255 total strands.
-        #this was formally a parameter but probably better to keep it fixed or automatically calculated.
         if n_strands<=255:
             self.outer_alphabet_size_bytes = 1
         else:
@@ -137,6 +135,10 @@ class BaseNBlockCodec:
         if n_strands>(2**(8*self.outer_alphabet_size_bytes)-1):
             raise ValueError("Too many strands for outer code.")
         self.n_strands = n_strands
+        if max_strand_index is None:
+            max_strand_index = n_strands
+        if max_strand_index<n_strands:   
+            raise ValueError("max_strand_index must be greater than or equal to n_strands.")
 
         self.n_message_strands = n_strands - n_redundant_strands
 
@@ -164,7 +166,7 @@ class BaseNBlockCodec:
         q = self.inner_coder.field.order
 
         #number of bytes needed to store the index
-        self.index_bits = np.ceil(np.log2(self.n_strands)).astype(int)
+        self.index_bits = np.ceil(np.log2(max_strand_index)).astype(int)
         logging.debug("bits per strand used for indexing: {}".format(self.index_bits))
 
         #message length in bytes (without index)
@@ -304,7 +306,7 @@ class BaseNBlockCodec:
         chunk_errors:list[int] = [-1] * self.n_strands
         for chunk in chunked_data:
             chunk_int = _baseN_to_int(chunk[0].tolist(), self.inner_coder.field.order)
-            chunk_index = chunk_int >> (self.data_chunk_size * 8) - index_start
+            chunk_index = (chunk_int >> (self.data_chunk_size * 8)) - index_start
             _mask = (2 ** (self.data_chunk_size * 8)) - 1
             chunk_int = chunk_int & _mask
             chunk_bytes:bytes = chunk_int.to_bytes(self.data_chunk_size, 'little')
