@@ -3,7 +3,7 @@ import struct
 import itertools
 import logging
 import typing
-from typing import Optional,Union, Callable, Tuple  #requires python 3.5 or later
+from typing import Optional,Union, Callable, Tuple, Literal, cast  #requires python 3.8 or later
 
 
 import numpy as np
@@ -160,7 +160,7 @@ class BaseNBlockCodec:
         #  sizes in bytes:
         #  |<---- self.data_chunk_size ----->|<- . ->|
         #                                        ^ = self.index_bits <-- in bits not bytes.
-        #  note: actual k remains alphabet_size-1, but the code is shorted (0 padded) to inner_n symbols. 
+        #  note: actual k remains alphabet_size-1, but the code is shortened (0 padded) to inner_n symbols. 
         k = inner_n - (inner_d - 1) 
         self.inner_k = k
         q = self.inner_coder.field.order
@@ -356,6 +356,63 @@ class BaseNBlockCodec:
                 logging.warning("Outer code errors found on strand {}, byte {}.".format(*e))
 
         return data_decoded, erasures, errors, chunk_errors
+    
+    def extract_index_dna(self, dna: str|bytes, words:list[str], alternate_words:list[str], error_check: bool = False, padding: Literal["left","right"]="right") -> int:
+        """
+        Extracts the index from the given DNA strand.
+
+        Args:
+            dna (str|bytes): The input DNA strand from which to extract the index.
+            error_check (bool, optional): If True, the inner_codec will be used to 
+                attempt to check for errors. Defaults to False.
+            padding Literal["left","right"], optional): Assume any missing bases are left or right of index.  Defaults to "right".
+                Note padded sequences are unlikely to error correct properly.
+            words (list[str]): The primary set of base words used, in order, for encoding.
+            alternate_words (list[str]): The alternate (aka synonymous) set of words used, in order, for encoding.
+
+        Returns:
+            int: The index. or -1 if error_check==True and unrecoverable error found.
+        """
+        word_len:int = len(words[0])
+        if isinstance(dna,bytes):
+            dna= dna.decode()
+        dna_s:str = cast(str,dna)
+        
+        if padding == "right": 
+            _p = self.inner_k*word_len - len(dna_s)
+            if _p>0: #if i have less than a full codeword of bases
+                dna_s = dna_s + "A"*_p  
+        elif padding == "left":
+            _p = self.inner_k*word_len - len(dna_s)
+            if _p>0: #if i have less than a full codeword of bases
+                dna_s = "A"*_p + dna_s 
+
+        data = dna_to_bN([dna_s],words,alternate_words)[0]
+         
+        return self.extract_index(data,error_check)
+
+    def extract_index(self, data: list[int], error_check: bool = False) -> int:
+        """
+        Extracts the index from the given DNA strand.
+
+        Args:
+            data list[int]: The input data from which to extract the index.
+                If a list[int] is given, it is assumed be be inner code symbols. 
+            error_check (bool, optional): If True, the inner_codec will be used to 
+                attempt to check for errors. Defaults to False.
+
+        Returns:
+            int: The index. or -1 if error_check==True and unrecoverable error found.
+        """
+        if error_check == False:
+            data = data[0:self.inner_k] #extract message
+        else:
+            data, n_corrected = self.inner_coder.decode(data,errors=True)[0].tolist()
+            if n_corrected < 0:
+                return -1
+        chunk_int = _baseN_to_int(data, self.inner_coder.field.order)
+        chunk_index = (chunk_int >> (self.data_chunk_size * 8))
+        return chunk_index
 
 
 #convert base N into DNA.

@@ -124,3 +124,17 @@ def test_nonzero_index():
   enc_d = coder.encode(test_data,index_start=2500)
   ded_d = coder.decode(enc_d,index_start=2500)
   assert ded_d[0] == test_data
+
+  dna = codec.b32_to_DNA_optimize(enc_d,codec._default_b32_alphabet,codec._default_b32_alphabet_alt)  #type: ignore
+
+  index = coder.extract_index_dna(dna[0][0],
+                                  words = syncoder._default_b32_alphabet,
+                                  alternate_words= syncoder._default_b32_alphabet_alt,
+                                  error_check=False)
+  assert index == 2500
+  offset = 5
+  index = coder.extract_index_dna(dna[offset][0],
+                                  words = syncoder._default_b32_alphabet,
+                                  alternate_words= syncoder._default_b32_alphabet_alt,
+                                  error_check=False)
+  assert index == 2500+offset
