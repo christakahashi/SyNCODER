@@ -10,7 +10,15 @@ import numpy as np
 from numpy.typing import ArrayLike
 
 import galois  
-import reedsolo 
+
+#import a version of reedsolo that supports multi instance
+import importlib.metadata
+import packaging.version
+rsvers = importlib.metadata.version('reedsolo')
+if packaging.version.Version(rsvers) <= packaging.version.Version("2.1.3b1"):
+    from . import reedsoloMulti as reedsolo
+else:
+    import reedsolo 
 
 #### ROADMAP ####
 # - integrate the baseN to DNA function here.  (generalize from b32fn)
