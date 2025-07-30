@@ -124,7 +124,8 @@ class BaseNBlockCodec:
                  inner_n:Optional[int]=None, 
                  n_redundant_strands:int=5, 
                  n_strands:int=100,
-                 max_strand_index:Optional[int]=None): 
+                 max_strand_index:Optional[int]=None,
+                 index_type:str="binary"): 
         """  
         Initialize the Codec object.
 
@@ -135,6 +136,12 @@ class BaseNBlockCodec:
             n_redundant_strands (int): Number of redundant strands.
             n_strands (int): Number of "strands" stored by this codec including redundant strands.
             max_strand_index (Optional[int]): Maximum guaranteed index. Default: n_strands.
+            index_type (str): Type of index to use. Options: "binary", "inner symbol", "inner". Default: "binary".
+
+            index_type "binary" integrates the index into the data stream as a binary number.  
+                This may help packing efficiency.
+            index_type "inner symbol"/"inner" integrates the index inner code symbol symbols.
+                This may help packing efficiency and always simplifies index extraction.
         """
         if n_strands<=255:
             self.outer_alphabet_size_bytes = 1
@@ -147,6 +154,10 @@ class BaseNBlockCodec:
             max_strand_index = n_strands
         if max_strand_index<n_strands:   
             raise ValueError("max_strand_index must be greater than or equal to n_strands.")
+        if index_type not in {"binary","inner symbol","inner"}:
+            raise ValueError("index_type must be 'binary' or 'inner symbol'.")
+        #"inner" and "inner symbol" are synomymous.
+        self.index_type = "inner" if index_type == "inner symbol" else index_type
 
         self.n_message_strands = n_strands - n_redundant_strands
 
@@ -178,24 +189,44 @@ class BaseNBlockCodec:
         logging.debug("bits per strand used for indexing: {}".format(self.index_bits))
 
         #message length in bytes (without index)
-        self.data_chunk_size = int(k*np.log2(q)-self.index_bits) // 8
-        logging.debug( "strand capacity in bytes: {}".format(self.data_chunk_size) )
+        if self.index_type == "binary":
+            self.data_chunk_size = int(k*np.log2(q)-self.index_bits) // 8
+        elif self.index_type == "inner":
+            self.index_symbols = np.ceil(np.log(max_strand_index)/np.log(q)).astype(int)
+            #check the above for rounding errors.
+            if q**(self.index_symbols-1) >= max_strand_index:
+                self.index_symbols -= 1
+            self.data_symbols = k-self.index_symbols
+            self.data_chunk_size = int(self.data_symbols*np.log2(q)) // 8
+            assert k == self.data_symbols + self.index_symbols
+            logging.debug("data chunk size in symbols: {}".format(self.data_symbols))
+            logging.debug(f"number of inner symbols: {k}; index symbols: {self.index_symbols}")
 
-        _wasted_bits = k*np.log2(q) - (self.data_chunk_size*8+self.index_bits )
-        logging.debug( "{} bits wasted per strand".format( _wasted_bits ) )
-        logging.debug( "Maximum strand index (using wasted bits): {}".format(2**(int(self.index_bits+_wasted_bits))))
-        _wasted_symbols = _wasted_bits/np.log2(q)
-        if  _wasted_symbols>=1:
-            logging.warning( "{} symbols wasted per strand.  Consider decreasing inner_n.".format( _wasted_symbols) )
-        else:
-            logging.debug("{} symbols wasted per strand".format( _wasted_symbols))
- 
-         
+        logging.debug( "strand capacity in bytes: {}".format(self.data_chunk_size) )
+        self.__compute_waste()
+
         self.block_capacity_bytes = self.data_chunk_size*(self.n_strands - n_redundant_strands) 
         logging.debug( "codec message size: {} bytes".format(self.block_capacity_bytes) )
 
         #init the outer coder 
         self.outer_coder = reedsolo.RSCodec(n_redundant_strands, c_exp=8*self.outer_alphabet_size_bytes)
+
+    def __compute_waste(self):
+        k = self.inner_k
+        q = self.inner_coder.field.order
+        if self.index_type == "binary":
+            _wasted_bits = k*np.log2(q) - (self.data_chunk_size*8+self.index_bits )
+            logging.debug( "{} bits wasted per strand".format( _wasted_bits ) )
+            logging.debug( "Maximum strand index (using wasted bits): {}".format(2**(int(self.index_bits+_wasted_bits))))
+            _wasted_symbols = _wasted_bits/np.log2(q)
+        elif self.index_type == "inner":
+            data_chunk_symbols_used = self.data_chunk_size*8/np.log2(q)  
+            _wasted_symbols = self.data_symbols - data_chunk_symbols_used
+            logging.debug( f"Maximum strand index:{q**self.index_symbols}")
+        if  _wasted_symbols>=1:
+            logging.warning( "{} symbols wasted per strand.  Consider decreasing inner_n.".format( _wasted_symbols) )
+        else:
+            logging.debug("{} symbols wasted per strand".format( _wasted_symbols))
 
     def encode(self,data:bytes,index_start:int=0)->list[list[int]]:
         """ Encodes the given data using the outer and inner codes.
@@ -273,11 +304,17 @@ class BaseNBlockCodec:
             d = chunk.tobytes()
             #use little endian to match x86/x64 byte order and avoid needing to pad byte string.
             chunk = int.from_bytes(d,'little') 
-            #add index to end (MS bits)
-            chunk += index<<(self.data_chunk_size*8)
+            if self.index_type == "binary":
+                #add index to end (MS bits)
+                chunk += index<<(self.data_chunk_size*8)
+
+                #but.. we still need to pad out the symbol stream.
+                chunk = _int_to_baseN(chunk,self.inner_coder.field.order,length=self.inner_k)
+            elif self.index_type == "inner":
+                chunk = _int_to_baseN(chunk,self.inner_coder.field.order,length=self.data_symbols)
+                chunk += _int_to_baseN(index,self.inner_coder.field.order,length=self.index_symbols)
+
             index += 1
-            #but.. we still need to pad out the symbol stream.
-            chunk = _int_to_baseN(chunk,self.inner_coder.field.order,length=self.inner_k)  
             chunks.append(chunk)
 
         #apply inner code
@@ -313,12 +350,15 @@ class BaseNBlockCodec:
         ordered_chunks:list[bytes|None] = [None] * self.n_strands
         chunk_errors:list[int] = [-1] * self.n_strands
         for chunk in chunked_data:
-            chunk_int = _baseN_to_int(chunk[0].tolist(), self.inner_coder.field.order)
-            chunk_index = (chunk_int >> (self.data_chunk_size * 8)) - index_start
-            _mask = (2 ** (self.data_chunk_size * 8)) - 1
-            chunk_int = chunk_int & _mask
+            if self.index_type == "binary":
+                chunk_int = _baseN_to_int(chunk[0].tolist(), self.inner_coder.field.order)
+                chunk_index = (chunk_int >> (self.data_chunk_size * 8)) - index_start
+                _mask = (2 ** (self.data_chunk_size * 8)) - 1
+                chunk_int = chunk_int & _mask
+            if self.index_type == "inner":
+                chunk_int = _baseN_to_int(chunk[0][:self.data_symbols].tolist(),self.inner_coder.field.order)
+                chunk_index = _baseN_to_int(chunk[0][self.data_symbols:].tolist(),self.inner_coder.field.order) - index_start
             chunk_bytes:bytes = chunk_int.to_bytes(self.data_chunk_size, 'little')
-            #print(chunk_index)
             try:
               ordered_chunks[chunk_index] = chunk_bytes
               chunk_errors[chunk_index] = chunk[1]

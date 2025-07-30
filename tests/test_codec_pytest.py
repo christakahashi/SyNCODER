@@ -12,7 +12,11 @@ codec = syncoder
 #numba_logger.setLevel(logging.WARNING)
 
 def test_encode_decode(): 
-  c = codec.BaseNBlockCodec(inner_alphabet_size=32,inner_d=5,inner_n=30)
+  encode_decode(index_type="binary")
+  encode_decode(index_type="inner")
+
+def encode_decode(index_type):
+  c = codec.BaseNBlockCodec(inner_alphabet_size=32,inner_d=5,inner_n=30,index_type=index_type)
 
   in_text = (codec.lipsum + codec.lipsum)[0:c.block_capacity_bytes]
 
