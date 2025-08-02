@@ -3,6 +3,7 @@
 import random
 import numpy as np
 from itertools import product
+from typing import Literal
 
 import syncoder
 codec = syncoder
@@ -14,13 +15,25 @@ codec = syncoder
 def test_encode_decode(): 
   encode_decode(index_type="binary")
   encode_decode(index_type="inner")
+  encode_decode(index_type="inner", index_loc="beginning")
 
-def encode_decode(index_type):
-  c = codec.BaseNBlockCodec(inner_alphabet_size=32,inner_d=5,inner_n=30,index_type=index_type)
+def encode_decode(index_type,index_loc:Literal["beginning","middle"]="middle"):
+  c = codec.BaseNBlockCodec(inner_alphabet_size=32,
+                            inner_d=5,
+                            inner_n=30,
+                            index_type=index_type,
+                            index_location=index_loc)
 
   in_text = (codec.lipsum + codec.lipsum)[0:c.block_capacity_bytes]
 
   coded = c.encode( in_text )
+  assert c.extract_index(coded[27]) == 27 #test extract index while we're at it
+  dnadata = syncoder.b32_to_DNA(coded,syncoder._default_b32_alphabet,syncoder._default_b32_alphabet_alt)
+  assert c.extract_index_dna(dnadata[27],
+                            words = syncoder._default_b32_alphabet,
+                            alternate_words= syncoder._default_b32_alphabet_alt,
+                            error_check=True) == 27
+
   random.shuffle(coded)
   #coded = coded[:-4] #erase a random strands
   corrupt_index = random.randint(0,len(coded[0])) 
@@ -80,6 +93,7 @@ def test_dna_to_bytes():
   dna_bytes, mask = codec.dna_to_bytes(DNA,alphabet,alphabet_alt)
   
   dna_baseN = _int_to_baseN(int.from_bytes(dna_bytes,"little"),len(alphabet))
+  #TODO: this can fail but only for some inputs randomly selected lookinto why.
   assert dna_baseN == answer32
 
   _t = np.array(dna_baseN)

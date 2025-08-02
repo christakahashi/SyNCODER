@@ -125,7 +125,8 @@ class BaseNBlockCodec:
                  n_redundant_strands:int=5, 
                  n_strands:int=100,
                  max_strand_index:Optional[int]=None,
-                 index_type:str="binary"): 
+                 index_type:Literal["binary", "inner symbol", "inner"]="binary",
+                 index_location:Literal["middle", "beginning", "end"]="middle"): 
         """  
         Initialize the Codec object.
 
@@ -137,11 +138,15 @@ class BaseNBlockCodec:
             n_strands (int): Number of "strands" stored by this codec including redundant strands.
             max_strand_index (Optional[int]): Maximum guaranteed index. Default: n_strands.
             index_type (str): Type of index to use. Options: "binary", "inner symbol", "inner". Default: "binary".
+            index_location (str): Location of the index within the inner code. Options: "middle", "beginning", "end". Default: "middle".
 
             index_type "binary" integrates the index into the data stream as a binary number.  
                 This may help packing efficiency.
             index_type "inner symbol"/"inner" integrates the index inner code symbol symbols.
                 This may help packing efficiency and always simplifies index extraction.
+            index_location "middle" (default) places the index after the data symbols but before the redundancy symbols.
+            index_location "beginning" places the index before the data symbols.
+            index_location "end" places the index after the redundancy symbols. (not implemented)
         """
         if n_strands<=255:
             self.outer_alphabet_size_bytes = 1
@@ -154,10 +159,20 @@ class BaseNBlockCodec:
             max_strand_index = n_strands
         if max_strand_index<n_strands:   
             raise ValueError("max_strand_index must be greater than or equal to n_strands.")
+        
         if index_type not in {"binary","inner symbol","inner"}:
             raise ValueError("index_type must be 'binary' or 'inner symbol'.")
         #"inner" and "inner symbol" are synomymous.
         self.index_type = "inner" if index_type == "inner symbol" else index_type
+
+        if index_location in {"middle","beginning","end"}:
+            self.index_location = index_location
+            if index_location == "end":
+                raise NotImplementedError("index_location 'end' is not implemented.")
+            if index_location != "middle" and index_type == "binary":
+                raise ValueError("index_location 'beginning' or 'end' not supported for index_type 'binary'.")
+        else:
+            raise ValueError("index_location must be 'middle', 'beginning', or 'end'.")
 
         self.n_message_strands = n_strands - n_redundant_strands
 
@@ -192,10 +207,7 @@ class BaseNBlockCodec:
         if self.index_type == "binary":
             self.data_chunk_size = int(k*np.log2(q)-self.index_bits) // 8
         elif self.index_type == "inner":
-            self.index_symbols = np.ceil(np.log(max_strand_index)/np.log(q)).astype(int)
-            #check the above for rounding errors.
-            if q**(self.index_symbols-1) >= max_strand_index:
-                self.index_symbols -= 1
+            self.index_symbols = len(_int_to_baseN(max_strand_index,q))
             self.data_symbols = k-self.index_symbols
             self.data_chunk_size = int(self.data_symbols*np.log2(q)) // 8
             assert k == self.data_symbols + self.index_symbols
@@ -203,6 +215,7 @@ class BaseNBlockCodec:
             logging.debug(f"number of inner symbols: {k}; index symbols: {self.index_symbols}")
 
         logging.debug( "strand capacity in bytes: {}".format(self.data_chunk_size) )
+        #todo: only execute if logging level is debug or warning
         self.__compute_waste()
 
         self.block_capacity_bytes = self.data_chunk_size*(self.n_strands - n_redundant_strands) 
@@ -223,6 +236,8 @@ class BaseNBlockCodec:
             data_chunk_symbols_used = self.data_chunk_size*8/np.log2(q)  
             _wasted_symbols = self.data_symbols - data_chunk_symbols_used
             logging.debug( f"Maximum strand index:{q**self.index_symbols}")
+        else:
+            raise ValueError("Unknown index type: {}".format(self.index_type)) #should be impossible to get here.
         if  _wasted_symbols>=1:
             logging.warning( "{} symbols wasted per strand.  Consider decreasing inner_n.".format( _wasted_symbols) )
         else:
@@ -262,14 +277,18 @@ class BaseNBlockCodec:
         #  |<rrrrrrrrrrrrrrrrr self.data_chunk_size rrrrrrrrrrrrr>|
         #  ...
         #  |<rrrrrrrrrrrrrrrrr self.data_chunk_size rrrrrrrrrrrrr>|
-        #  3. inner code  (R= inner code redundancy applied to rows, * = inner code symbol)
-        #  |<***************** self.data_chunk_size *************RRRRRRRR>|
-        #  |<***************** self.data_chunk_size *************RRRRRRRR>|
+        #  3. inner code  (R= inner code redundancy applied to rows)
+        #                 (* = inner code symbol)
+        #                 (@= binary index concatenated to data bits)
+        #                 (a= binary index concatenated to outer code redundancy bits)
+        #     When index type is inner code, @ and a are full symbols.
+        #  |<***************** self.data_chunk_size *************@@@RRRRRRRR>|
+        #  |<***************** self.data_chunk_size *************@@@RRRRRRRR>|
         #  ...
-        #  |<***************** self.data_chunk_size *************RRRRRRRR>|
-        #  |<rrrrrrrrrrrrrrrrr self.data_chunk_size rrrrrrrrrrrrrRRRRRRRR>|
+        #  |<***************** self.data_chunk_size *************@@@RRRRRRRR>|
+        #  |<rrrrrrrrrrrrrrrrr self.data_chunk_size rrrrrrrrrrrrraaaRRRRRRRR>|
         #  ...
-        #  |<rrrrrrrrrrrrrrrrr self.data_chunk_size rrrrrrrrrrrrrRRRRRRRR>|
+        #  |<rrrrrrrrrrrrrrrrr self.data_chunk_size rrrrrrrrrrrrraaaRRRRRRRR>|
 
         #1. Reshape data 
         logging.debug("applying outer code to {} bytes".format(len(data)))
@@ -312,7 +331,13 @@ class BaseNBlockCodec:
                 chunk = _int_to_baseN(chunk,self.inner_coder.field.order,length=self.inner_k)
             elif self.index_type == "inner":
                 chunk = _int_to_baseN(chunk,self.inner_coder.field.order,length=self.data_symbols)
-                chunk += _int_to_baseN(index,self.inner_coder.field.order,length=self.index_symbols)
+                index_symbols = _int_to_baseN(index,self.inner_coder.field.order,length=self.index_symbols)
+                if self.index_location == "middle":
+                    chunk += index_symbols
+                elif self.index_location == "beginning":
+                    chunk = index_symbols + chunk
+                else:
+                    raise NotImplementedError("index_location 'end' is not implemented.")
 
             index += 1
             chunks.append(chunk)
@@ -355,9 +380,17 @@ class BaseNBlockCodec:
                 chunk_index = (chunk_int >> (self.data_chunk_size * 8)) - index_start
                 _mask = (2 ** (self.data_chunk_size * 8)) - 1
                 chunk_int = chunk_int & _mask
-            if self.index_type == "inner":
-                chunk_int = _baseN_to_int(chunk[0][:self.data_symbols].tolist(),self.inner_coder.field.order)
-                chunk_index = _baseN_to_int(chunk[0][self.data_symbols:].tolist(),self.inner_coder.field.order) - index_start
+            elif self.index_type == "inner":
+                if self.index_location == "middle":
+                    chunk_int = _baseN_to_int(chunk[0][:self.data_symbols].tolist(),self.inner_coder.field.order)
+                    chunk_index = _baseN_to_int(chunk[0][self.data_symbols:].tolist(),self.inner_coder.field.order) - index_start
+                elif self.index_location == "beginning":
+                    chunk_index = _baseN_to_int(chunk[0][:-self.data_symbols].tolist(),self.inner_coder.field.order) - index_start
+                    chunk_int = _baseN_to_int(chunk[0][-self.data_symbols:].tolist(),self.inner_coder.field.order)
+                else:
+                    raise NotImplementedError("index_location 'end' is not implemented.")
+            else:
+                raise ValueError("Unknown index type: {}".format(self.index_type)) #should be impossible to get here.
             chunk_bytes:bytes = chunk_int.to_bytes(self.data_chunk_size, 'little')
             try:
               ordered_chunks[chunk_index] = chunk_bytes
@@ -421,27 +454,26 @@ class BaseNBlockCodec:
         Returns:
             int: The index. or -1 if error_check==True and unrecoverable error found.
         """
-        word_len:int = len(words[0])
+        symbol_len:int = len(words[0])
         if isinstance(dna,bytes):
             dna= dna.decode()
         dna_s:str = cast(str,dna)
-        
-        if padding == "right": 
-            _p = self.inner_k*word_len - len(dna_s)
-            if _p>0: #if i have less than a full codeword of bases
-                dna_s = dna_s + "A"*_p  
-        elif padding == "left":
-            _p = self.inner_k*word_len - len(dna_s)
-            if _p>0: #if i have less than a full codeword of bases
-                dna_s = "A"*_p + dna_s 
 
+        num_missing = self.inner_k*symbol_len - len(dna_s) # in DNA bases
+        if num_missing>0: #if i have less than a full codeword of bases
+            if padding == "right": 
+                dna_s = dna_s + "A"*num_missing
+            elif padding == "left":
+                dna_s = "A"*num_missing + dna_s
+
+        #This could fail if padding makes a symbol not in words or alternate_words.
         data = dna_to_bN([dna_s],words,alternate_words)[0]
          
         return self.extract_index(data,error_check)
 
     def extract_index(self, data: list[int], error_check: bool = False) -> int:
         """
-        Extracts the index from the given DNA strand.
+        Extracts the index from the given inner code sequence.
 
         Args:
             data list[int]: The input data from which to extract the index.
@@ -455,11 +487,23 @@ class BaseNBlockCodec:
         if error_check == False:
             data = data[0:self.inner_k] #extract message
         else:
-            data, n_corrected = self.inner_coder.decode(data,errors=True)[0].tolist()
+            data_gf, n_corrected = self.inner_coder.decode(data,errors=True)
+            data = data_gf.tolist()
             if n_corrected < 0:
                 return -1
-        chunk_int = _baseN_to_int(data, self.inner_coder.field.order)
-        chunk_index = (chunk_int >> (self.data_chunk_size * 8))
+        if self.index_type == "binary":
+            chunk_int = _baseN_to_int(data, self.inner_coder.field.order)
+            chunk_index = (chunk_int >> (self.data_chunk_size * 8))
+        elif self.index_type == "inner":
+            if self.index_location == "middle":
+                chunk_index_baseN = data[self.data_symbols:] 
+            elif self.index_location == "beginning":
+                chunk_index_baseN = data[:-self.data_symbols]
+            else:
+                raise NotImplementedError("index_location 'end' is not implemented.")
+            chunk_index = _baseN_to_int(chunk_index_baseN, self.inner_coder.field.order)
+        else:
+            raise ValueError("Unknown index type: {}".format(self.index_type)) #should be impossible to get here.
         return chunk_index
 
 
