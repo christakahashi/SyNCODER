@@ -3,6 +3,7 @@ import struct
 import itertools
 import logging
 import typing
+from . import sector01
 from typing import Optional,Union, Callable, Tuple, Literal, cast  #requires python 3.8 or later
 
 
@@ -159,6 +160,7 @@ class BaseNBlockCodec:
             max_strand_index = n_strands
         if max_strand_index<n_strands:   
             raise ValueError("max_strand_index must be greater than or equal to n_strands.")
+        self.max_strand_index = max_strand_index
         
         if index_type not in {"binary","inner symbol","inner"}:
             raise ValueError("index_type must be 'binary' or 'inner symbol'.")
@@ -183,6 +185,7 @@ class BaseNBlockCodec:
             #      make sure extra sequence numbers are not added to inner blocks.  and or maybe add a 
             #      parameter for the number of inner blocks per strand.
             assert inner_n<inner_alphabet_size
+        self.inner_n = inner_n
         
         self.inner_coder = galois.ReedSolomon(n=inner_alphabet_size-1,d=inner_d,field=galois.GF(inner_alphabet_size))
         #  in units of symbols (there are q=inner_alphabet_size possible symbols)
@@ -199,12 +202,12 @@ class BaseNBlockCodec:
         self.inner_k = k
         q = self.inner_coder.field.order
 
-        #number of bytes needed to store the index
-        self.index_bits = np.ceil(np.log2(max_strand_index)).astype(int)
-        logging.debug("bits per strand used for indexing: {}".format(self.index_bits))
 
         #message length in bytes (without index)
         if self.index_type == "binary":
+            #number of bytes needed to store the index
+            self.index_bits = np.ceil(np.log2(max_strand_index)).astype(int)
+            logging.debug("bits per strand used for indexing: {}".format(self.index_bits))
             self.data_chunk_size = int(k*np.log2(q)-self.index_bits) // 8
         elif self.index_type == "inner":
             self.index_symbols = len(_int_to_baseN(max_strand_index,q))
@@ -242,6 +245,38 @@ class BaseNBlockCodec:
             logging.warning( "{} symbols wasted per strand.  Consider decreasing inner_n.".format( _wasted_symbols) )
         else:
             logging.debug("{} symbols wasted per strand".format( _wasted_symbols))
+
+    def generate_sector1(self, alphabets,vendor_id = "UNKNOWN",primer_len=40):
+        alen = len(alphabets[0])
+        abases = len(alphabets[0][0])
+
+        for a in alphabets:
+            if len(a) != alen:
+                raise ValueError("All alphabets must be of the same length")
+            for s in a:
+                if len(s) != abases:
+                    raise ValueError("All elements of alphabets must be the same number of bases")
+
+        sector1 = sector01.get_sector_1_obj()
+        codec_params = sector1["codec"]["params"]
+        codec_params["alphs"] = alphabets
+        codec_params["innerd"] = self.inner_coder.d
+        codec_params["innern"] = self.inner_n
+        codec_params["nstrands"] = self.n_strands
+        codec_params["neccstrand"] = self.outer_coder.nsym
+        codec_params["imax"] = self.max_strand_index
+        codec_params["itype"] = self.index_type
+        codec_params["ilocation"] = self.index_location
+        sector1["vendorid"] = vendor_id
+        seq_params = sector1["seq"]
+        osize = self.inner_coder.n*abases+primer_len
+        seq_params["osizemin"] = osize
+        seq_params["osizemedian"] = osize
+        seq_params["osizemax"] = osize
+        #these two don't make sense
+        seq_params["orepmin"] = 1
+        seq_params["orepmax"] = 100
+        return sector1
 
     def encode(self,data:bytes,index_start:int=0)->list[list[int]]:
         """ Encodes the given data using the outer and inner codes.
