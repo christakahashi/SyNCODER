@@ -225,7 +225,11 @@ class BaseNBlockCodec:
         logging.debug( "codec message size: {} bytes".format(self.block_capacity_bytes) )
 
         #init the outer coder 
+        if self.outer_alphabet_size_bytes==2 and self.data_chunk_size%2!=0:
+            raise ValueError("data_chunk_size must be even for 16 bit outer code.")
         self.outer_coder = reedsolo.RSCodec(n_redundant_strands, c_exp=8*self.outer_alphabet_size_bytes)
+        #c=0 to match reedsolo default
+        self.outer_coder_fast = galois.ReedSolomon(n=2**16-1,d=n_redundant_strands+1,c=0,field=galois.GF(2**16))
 
     def __compute_waste(self):
         k = self.inner_k
@@ -278,12 +282,13 @@ class BaseNBlockCodec:
         seq_params["orepmax"] = 100
         return sector1
 
-    def encode(self,data:bytes,index_start:int=0)->list[list[int]]:
+    def encode(self,data:bytes,index_start:int=0,fast:bool=True)->list[list[int]]:
         """ Encodes the given data using the outer and inner codes.
 
         Args:
             data (bytes): The input data to be encoded.
             index_start (int, optional): The starting index for the encoded chunks. Defaults to 0.
+            fast (bool, optional): If True, use the fast outer code encoder. Defaults to True.  There should be no reason to use slow encoder.
 
         Returns:
             list[list[int]]: The encoded chunks of data.
@@ -344,7 +349,10 @@ class BaseNBlockCodec:
             raise ValueError("Unsupported outer code byte size.")
 
         #2. apply the outer code (encode columns of data)
-        data_enc_cols = np.array([self.outer_coder.encode(dc) for dc in data_np.transpose()],dtype=data_np.dtype)
+        if fast:
+            data_enc_cols = np.array([self.outer_coder_fast.encode(dc) for dc in data_np.transpose()],dtype=data_np.dtype)
+        else:
+            data_enc_cols = np.array([self.outer_coder.encode(dc) for dc in data_np.transpose()],dtype=data_np.dtype)
         data_enc_chunks = data_enc_cols.transpose()
         
         logging.debug("outer coded strands: {}".format(data_enc_chunks.shape[0]))
@@ -382,13 +390,14 @@ class BaseNBlockCodec:
 
         return ic_chunks
 
-    def decode(self, data: list[list[int]], index_start: int = 0) -> Tuple[bytes,ArrayLike,ArrayLike,ArrayLike]:
+    def decode(self, data: list[list[int]], index_start: int = 0,fast: bool = False) -> Tuple[bytes,ArrayLike,ArrayLike,ArrayLike]:
         """
         Decodes the given data.
 
         Args:
             data (list[list[int]]): The encoded data to be decoded.
             index_start (int, optional): The starting index for decoding. Defaults to 0.
+            fast: (bool, optional): If True, use the fast outer code decoder, but erasures are treated as substitutions. Defaults to False.
 
         Returns:
             bytes: The decoded data.
@@ -442,6 +451,9 @@ class BaseNBlockCodec:
         #we're all bytes now, but the checker can't tell that.
         ordered_chunks_bytes:list[bytes] = typing.cast(list[bytes],ordered_chunks)
 
+        # report erasures (lost strands) in outer code
+        logging.info("erasures (lost) chunks: {}".format(erasures))
+
         if self.outer_coder.c_exp==8:
             outer_dtype = np.uint8
         elif self.outer_coder.c_exp==16:
@@ -449,13 +461,21 @@ class BaseNBlockCodec:
         else:
             raise ValueError("Unsupported outer code byte size.")
         data_np_encoded = np.array([np.frombuffer(c, dtype=outer_dtype) for c in ordered_chunks_bytes]).transpose()
-        data_decoded_results = [self.outer_coder.decode(dc, erase_pos=erasures) for dc in data_np_encoded]
-        data_decoded_chunks = np.array([d[0] for d in data_decoded_results],dtype=outer_dtype).transpose()
+        
+        if fast:
+            data_decoded_results = [self.outer_coder_fast.decode(dc,errors=True) for dc in data_np_encoded]
+            data_errata_col_pos = [] #galois doesn't report error positions
+            data_num_errors = [int(x[1]) for x in data_decoded_results]
+            if -1 in data_num_errors:
+                logging.error("Fast mode outer code decode failed on at least one column.")
+                raise ValueError("Fast mode outer code decode failed on at least one column.")
+            logging.info("Fast mode found {} outer code column errors.".format(data_num_errors))
+            data_decoded_chunks = np.array([np.array(d[0]) for d in data_decoded_results],dtype=outer_dtype).transpose()
+        else:
+            data_decoded_results = [self.outer_coder.decode(dc, erase_pos=erasures) for dc in data_np_encoded]
+            data_errata_col_pos = [e[2] for e in data_decoded_results]
+            data_decoded_chunks = np.array([d[0] for d in data_decoded_results],dtype=outer_dtype).transpose()
         data_decoded = data_decoded_chunks.flatten().tobytes()
-
-        # report erasures (lost strands) in outer code
-        logging.info("erasures (lost) chunks: {}".format(erasures))
-        data_errata_col_pos = [e[2] for e in data_decoded_results]
 
         errors = []
         for i, pos in enumerate(data_errata_col_pos):
@@ -469,7 +489,7 @@ class BaseNBlockCodec:
             if e[0] in erasures:
                 pass
             else:
-                logging.warning("Outer code errors found on strand {}, byte {}.".format(*e))
+                logging.info("Outer code errors found on strand {}, byte {}.".format(*e))
 
         return data_decoded, erasures, errors, chunk_errors
     
