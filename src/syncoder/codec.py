@@ -229,7 +229,8 @@ class BaseNBlockCodec:
             raise ValueError("data_chunk_size must be even for 16 bit outer code.")
         self.outer_coder = reedsolo.RSCodec(n_redundant_strands, c_exp=8*self.outer_alphabet_size_bytes)
         #c=0 to match reedsolo default
-        self.outer_coder_fast = galois.ReedSolomon(n=2**16-1,d=n_redundant_strands+1,c=0,field=galois.GF(2**16))
+        if(self.outer_alphabet_size_bytes == 2):
+            self.outer_coder_fast = galois.ReedSolomon(n=2**16-1,d=n_redundant_strands+1,c=0,field=galois.GF(2**16))
 
     def __compute_waste(self):
         k = self.inner_k
@@ -260,6 +261,9 @@ class BaseNBlockCodec:
             for s in a:
                 if len(s) != abases:
                     raise ValueError("All elements of alphabets must be the same number of bases")
+        
+        #encode as one string to save space.
+        alphabets = [" ".join(x) for x in alphabets]
 
         sector1 = sector01.get_sector_1_obj()
         codec_params = sector1["codec"]["params"]
@@ -390,13 +394,14 @@ class BaseNBlockCodec:
 
         return ic_chunks
 
-    def decode(self, data: list[list[int]], index_start: int = 0,fast: bool = False) -> Tuple[bytes,ArrayLike,ArrayLike,ArrayLike]:
+    def decode(self, data: list[list[int]], index_start: int = 0, n_strands: int = None, fast: bool = False) -> Tuple[bytes,ArrayLike,ArrayLike,ArrayLike]:
         """
         Decodes the given data.
 
         Args:
             data (list[list[int]]): The encoded data to be decoded.
             index_start (int, optional): The starting index for decoding. Defaults to 0.
+            n_strands (int, optional): The number of strands expected. Defaults to n_strands set in constructor.
             fast: (bool, optional): If True, use the fast outer code decoder, but erasures are treated as substitutions. Defaults to False.
 
         Returns:
@@ -408,16 +413,19 @@ class BaseNBlockCodec:
         Raises:
             None
         """
+        if n_strands is None:
+            n_strands = self.n_strands
+
         # inner decode
         ## TODO: handle erasures in inner code.
 
         # I'm sure it'll be a (FieldArray,int) ----------------V
-        chunked_data:list[Tuple[galois.FieldArray,int]] = [self.inner_coder.decode(d,errors=True) for d in data] #type:ignore
+        chunked_data:list[Tuple[galois.FieldArray,int]] = [self.inner_coder.decode(d,errors=True) for d in data if d != []] #type:ignore
         
 
         # handle outer decode
-        ordered_chunks:list[bytes|None] = [None] * self.n_strands
-        chunk_errors:list[int] = [-1] * self.n_strands
+        ordered_chunks:list[bytes|None] = [None] * n_strands
+        chunk_errors:list[int] = [-1] * n_strands
         for chunk in chunked_data:
             if self.index_type == "binary":
                 chunk_int = _baseN_to_int(chunk[0].tolist(), self.inner_coder.field.order)
@@ -435,7 +443,11 @@ class BaseNBlockCodec:
                     raise NotImplementedError("index_location 'end' is not implemented.")
             else:
                 raise ValueError("Unknown index type: {}".format(self.index_type)) #should be impossible to get here.
-            chunk_bytes:bytes = chunk_int.to_bytes(self.data_chunk_size, 'little')
+            #this can be to big sometimes.  TODO handle more gracefully
+            try:
+                chunk_bytes:bytes = chunk_int.to_bytes(self.data_chunk_size, 'little')
+            except OverflowError:
+                logging.info("chunk overflow for strand index:" + str(chunk_index)+ "intval: "+ str(chunk_int))
             try:
               ordered_chunks[chunk_index] = chunk_bytes
               chunk_errors[chunk_index] = chunk[1]
