@@ -4,9 +4,10 @@ channels:
 dependencies:
   - python>=3.13
   - pip
-  - numpy=2.2.6 # version pinned for galois 0.4.6
+  - "libblas=*=*mkl" 
+  - numpy 
   - matplotlib=3.*
-  - numba=0.61.* # version pinned for galois 0.4.6
+  - numba=0.62.* # version pinned for galois 0.4.8
   - pytest
   - sphinx=7.*
   - sphinx_rtd_theme
@@ -15,6 +16,6 @@ dependencies:
   - ipykernel
   - twine
   - pip:
-    - galois>=0.4.6
+    - galois>=0.4.8
     - build
 
