@@ -19,7 +19,7 @@ rsvers = importlib.metadata.version('reedsolo')
 if packaging.version.Version(rsvers) <= packaging.version.Version("2.1.3b1"):
     from . import reedsoloMulti as reedsolo
 else:
-    import reedsolo 
+    import reedsolo  # pyright: ignore[reportMissingImports]
 
 #### ROADMAP ####
 # - integrate the baseN to DNA function here.  (generalize from b32fn)
@@ -394,7 +394,7 @@ class BaseNBlockCodec:
 
         return ic_chunks
 
-    def decode(self, data: list[list[int]], index_start: int = 0, n_strands: int = None, fast: bool = False) -> Tuple[bytes,ArrayLike,ArrayLike,ArrayLike]:
+    def decode(self, data: list[list[int]], index_start: int = 0, n_strands: int|None = None, fast: bool = False) -> Tuple[bytes,ArrayLike,ArrayLike,ArrayLike]:
         """
         Decodes the given data.
 
@@ -446,13 +446,13 @@ class BaseNBlockCodec:
             #this can be to big sometimes.  TODO handle more gracefully
             try:
                 chunk_bytes:bytes = chunk_int.to_bytes(self.data_chunk_size, 'little')
+                try:
+                    ordered_chunks[chunk_index] = chunk_bytes
+                    chunk_errors[chunk_index] = chunk[1]
+                except IndexError:
+                    logging.info("strand index out of bounds:" + str(chunk_index))
             except OverflowError:
                 logging.info("chunk overflow for strand index:" + str(chunk_index)+ "intval: "+ str(chunk_int))
-            try:
-              ordered_chunks[chunk_index] = chunk_bytes
-              chunk_errors[chunk_index] = chunk[1]
-            except IndexError:
-              logging.info("strand index out of bounds:" + str(chunk_index))
 
         # identify erasures
         erasures = []
@@ -475,7 +475,11 @@ class BaseNBlockCodec:
         data_np_encoded = np.array([np.frombuffer(c, dtype=outer_dtype) for c in ordered_chunks_bytes]).transpose()
         
         if fast:
-            data_decoded_results = [self.outer_coder_fast.decode(dc,errors=True) for dc in data_np_encoded]
+            has_erasuers = len(erasures)>0
+            if has_erasuers:
+                erasures_bool = np.zeros(data_np_encoded.shape[1],dtype=bool)
+                erasures_bool[erasures] = True
+            data_decoded_results = [self.outer_coder_fast.decode(dc,errors=True,erasures=erasures_bool) for dc in data_np_encoded]
             data_errata_col_pos = [] #galois doesn't report error positions
             data_num_errors = [int(x[1]) for x in data_decoded_results]
             if -1 in data_num_errors:

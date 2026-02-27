@@ -1,5 +1,3 @@
-#write a test for codec.py
-
 import random
 import numpy as np
 from itertools import product
@@ -40,6 +38,32 @@ def encode_decode(index_type,index_loc:Literal["beginning","middle"]="middle"):
   coded[0][corrupt_index] = 6 
 
   out_text = c.decode( coded )[0]
+  assert in_text == out_text
+  #check inner_n is causing the correct number of bases
+  assert len(coded[0]) == 30 
+
+def test_encode_decode_fast_erase():
+  index_type = "inner"
+  index_loc:Literal["beginning","middle"]="middle"
+  c = codec.BaseNBlockCodec(inner_alphabet_size=32,
+                            inner_d=5,
+                            inner_n=30,
+                            index_type=index_type,
+                            index_location=index_loc,
+                            n_strands = 2001,
+                            n_redundant_strands=100
+                            )
+
+  in_text = np.random.bytes( c.block_capacity_bytes ) 
+  coded = c.encode( in_text ) 
+  dnadata = syncoder.b32_to_DNA(coded,syncoder._default_b32_alphabet,syncoder._default_b32_alphabet_alt)
+ 
+  random.shuffle(coded)
+  coded = coded[:-90] #erase a random strands
+  #corrupt_index = random.randint(0,len(coded[0])) 
+  #coded[0][corrupt_index] = 6 
+
+  out_text = c.decode( coded, fast=True)[0]
   assert in_text == out_text
   #check inner_n is causing the correct number of bases
   assert len(coded[0]) == 30 
