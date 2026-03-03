@@ -394,7 +394,7 @@ class BaseNBlockCodec:
 
         return ic_chunks
 
-    def decode(self, data: list[list[int]], index_start: int = 0, n_strands: int|None = None, fast: bool = False) -> Tuple[bytes,ArrayLike,ArrayLike,ArrayLike]:
+    def decode(self, data: list[list[int]], index_start: int = 0, n_strands: int|None = None, fast: bool = False) -> Tuple[bytes|None,ArrayLike,ArrayLike,ArrayLike]:
         """
         Decodes the given data.
 
@@ -405,7 +405,7 @@ class BaseNBlockCodec:
             fast: (bool, optional): If True, use the fast outer code decoder, but erasures are treated as substitutions. Defaults to False.
 
         Returns:
-            bytes: The decoded data.
+            bytes|None: The decoded data. Or None if decoding failed.
             outer erasures: list of erasures in outer code.
             outer errors: list of errors in outer code.
             inner errors: list of number of errors in inner code by strand index. -1 -> strand not present.
@@ -512,7 +512,7 @@ class BaseNBlockCodec:
                 logging.info("Outer code errors found on strand {}, byte {}.".format(*e))
 
         if fast:
-            return data_decoded, erasures, data_num_errors, chunk_errors
+            return data_decoded, erasures, data_num_errors, chunk_errors # pyright: ignore[reportPossiblyUnboundVariable] 
         else:
             return data_decoded, erasures, errors, chunk_errors
     
