@@ -427,6 +427,9 @@ class BaseNBlockCodec:
         ordered_chunks:list[bytes|None] = [None] * n_strands
         chunk_errors:list[int] = [-1] * n_strands
         for chunk in chunked_data:
+            #TODO: decide if its better to throw these out or keep them.
+            #if chunk[1]<0: #can't decode and the address may be bad so discard.
+            #    continue
             if self.index_type == "binary":
                 chunk_int = _baseN_to_int(chunk[0].tolist(), self.inner_coder.field.order)
                 chunk_index = (chunk_int >> (self.data_chunk_size * 8)) - index_start
@@ -476,15 +479,16 @@ class BaseNBlockCodec:
         
         if fast:
             has_erasuers = len(erasures)>0
+            erasures_bool = np.zeros(data_np_encoded.shape[1],dtype=bool)
             if has_erasuers:
-                erasures_bool = np.zeros(data_np_encoded.shape[1],dtype=bool)
                 erasures_bool[erasures] = True
             data_decoded_results = [self.outer_coder_fast.decode(dc,errors=True,erasures=erasures_bool) for dc in data_np_encoded]
             data_errata_col_pos = [] #galois doesn't report error positions
             data_num_errors = [int(x[1]) for x in data_decoded_results]
             if -1 in data_num_errors:
                 logging.error("Fast mode outer code decode failed on at least one column.")
-                raise ValueError("Fast mode outer code decode failed on at least one column.")
+                return None, erasures, data_num_errors, chunk_errors
+                #raise ValueError(f"Fast mode outer code decode failed on at least one column.  numerrors:{data_num_errors}")
             logging.info("Fast mode found {} outer code column errors.".format(data_num_errors))
             data_decoded_chunks = np.array([np.array(d[0]) for d in data_decoded_results],dtype=outer_dtype).transpose()
         else:
@@ -507,18 +511,23 @@ class BaseNBlockCodec:
             else:
                 logging.info("Outer code errors found on strand {}, byte {}.".format(*e))
 
-        return data_decoded, erasures, errors, chunk_errors
+        if fast:
+            return data_decoded, erasures, data_num_errors, chunk_errors
+        else:
+            return data_decoded, erasures, errors, chunk_errors
     
-    def extract_index_dna(self, dna: str|bytes, words:list[str], alternate_words:list[str], error_check: bool = False, padding: Literal["left","right"]="right") -> int:
+    def extract_index_dna(self, dna: str|bytes, words:list[str], alternate_words:list[str], error_check: bool|Literal["erasures"] = False, padding: Literal["left","right"]="right") -> int:
         """
         Extracts the index from the given DNA strand.
 
         Args:
             dna (str|bytes): The input DNA strand from which to extract the index.
-            error_check (bool, optional): If True, the inner_codec will be used to 
-                attempt to check for errors. Defaults to False.
-            padding Literal["left","right"], optional): Assume any missing bases are left or right of index.  Defaults to "right".
-                Note padded sequences are unlikely to error correct properly.
+            error_check (bool|Literal["erasures"], optional): If True, the inner_codec will be used to 
+                attempt to check for errors.  if "erasures", the inner codec will check only if it encounters an N.
+                Defaults to False.
+            padding Literal["left","right"], optional): Assume any missing bases are left or right of index.  
+                Defaults to "right".
+                Note: padded sequences are unlikely to error correct properly.
             words (list[str]): The primary set of base words used, in order, for encoding.
             alternate_words (list[str]): The alternate (aka synonymous) set of words used, in order, for encoding.
 
@@ -537,12 +546,30 @@ class BaseNBlockCodec:
             elif padding == "left":
                 dna_s = "A"*num_missing + dna_s
 
+
+        if error_check == "erasures":
+            erasures = np.zeros(len(dna_s)//symbol_len,dtype=bool)
+            _temp = []
+            for i,c in enumerate(dna_s):
+                if c.upper() not in "ACGT":
+                    erasures[i//symbol_len] = True
+                    _temp.append("A")
+                else:
+                    _temp.append(c)
+            has_erasures = bool(np.any(erasures))
+            if has_erasures: #don't bother if nothing has changed.
+                dna_s = "".join(_temp) 
+        else:
+            has_erasures = False
+            erasures = None
+
+        ec = (has_erasures and error_check=="erasures") or (error_check==True)
         #This could fail if padding makes a symbol not in words or alternate_words.
         data = dna_to_bN([dna_s],words,alternate_words)[0]
          
-        return self.extract_index(data,error_check)
+        return self.extract_index(data,ec,erasures)
 
-    def extract_index(self, data: list[int], error_check: bool = False) -> int:
+    def extract_index(self, data: list[int], error_check: bool = False, erasures: np.ndarray|None = None) -> int:
         """
         Extracts the index from the given inner code sequence.
 
@@ -551,6 +578,7 @@ class BaseNBlockCodec:
                 If a list[int] is given, it is assumed be be inner code symbols. 
             error_check (bool, optional): If True, the inner_codec will be used to 
                 attempt to check for errors. Defaults to False.
+            erasures (np.ndarray|None, optional): A boolean array indicating which positions are erased. Defaults to None.
 
         Returns:
             int: The index. or -1 if error_check==True and unrecoverable error found.
@@ -558,7 +586,7 @@ class BaseNBlockCodec:
         if error_check == False:
             data = data[0:self.inner_k] #extract message
         else:
-            data_gf, n_corrected = self.inner_coder.decode(data,errors=True)
+            data_gf, n_corrected = self.inner_coder.decode(data,errors=True,erasures=erasures) #type:ignore
             data = data_gf.tolist()
             if n_corrected < 0:
                 return -1
