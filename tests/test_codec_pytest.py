@@ -63,7 +63,7 @@ def test_encode_decode_fast_erase():
   #corrupt_index = random.randint(0,len(coded[0])) 
   #coded[0][corrupt_index] = 6 
 
-  out_text = c.decode( coded, fast=True)[0]
+  out_text = c.decode( coded)[0]
   assert in_text == out_text
   #check inner_n is causing the correct number of bases
   assert len(coded[0]) == 30 

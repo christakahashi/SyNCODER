@@ -9,17 +9,7 @@ from numpy.typing import ArrayLike
 
 import galois  
 
-#import a version of reedsolo that supports multi instance
-import importlib.metadata
-import packaging.version
-rsvers = importlib.metadata.version('reedsolo')
-if packaging.version.Version(rsvers) <= packaging.version.Version("2.1.3b1"):
-    from . import reedsoloMulti as reedsolo
-else:
-    import reedsolo  # pyright: ignore[reportMissingImports]
-
 #### ROADMAP ####
-# - integrate the baseN to DNA function here.  (generalize from b32fn)
 # - Strand prefix sub-encoder.
 # - Sample objective functions (at least minimize homopolymers and avoid annealing.)
 
@@ -224,10 +214,12 @@ class BaseNBlockCodec:
         #init the outer coder 
         if self.outer_alphabet_size_bytes==2 and self.data_chunk_size%2!=0:
             raise ValueError("data_chunk_size must be even for 16 bit outer code.")
-        self.outer_coder = reedsolo.RSCodec(n_redundant_strands, c_exp=8*self.outer_alphabet_size_bytes)
-        #c=0 to match reedsolo default
-        if(self.outer_alphabet_size_bytes == 2):
-            self.outer_coder_fast = galois.ReedSolomon(n=2**16-1,d=n_redundant_strands+1,c=0,field=galois.GF(2**16))
+        #c=0 to match reedsolo library's default for code compatibility with prior versions of this codec.
+        #   This may be changed in a future major version.
+        self.outer_coder_fast = galois.ReedSolomon(n=2**(self.outer_alphabet_size_bytes*8)-1,
+                                                   d=n_redundant_strands+1,
+                                                   c=0,
+                                                   field=galois.GF(2**(self.outer_alphabet_size_bytes*8)))
 
     def __compute_waste(self):
         k = self.inner_k
@@ -266,7 +258,7 @@ class BaseNBlockCodec:
         files_nstrands = 0
         if file_meta_data is not None:
             for block_name, block_meta in file_meta_data.items():
-                strand_count_code_block = block_meta["blen"]//self.data_chunk_size+self.outer_coder.nsym
+                strand_count_code_block = block_meta["blen"]//self.data_chunk_size+self.outer_coder_fast.d-1
                 strand_count = strand_count_code_block*len(block_meta["istart"])
                 files_nstrands+=strand_count
         
@@ -282,7 +274,7 @@ class BaseNBlockCodec:
         codec_params["innerd"] = self.inner_coder.d
         codec_params["innern"] = self.inner_n
         codec_params["nstrands"] = self.n_strands
-        codec_params["neccstrand"] = self.outer_coder.nsym
+        codec_params["neccstrand"] = self.outer_coder_fast.d-1
         codec_params["imax"] = self.max_strand_index
         codec_params["itype"] = self.index_type
         codec_params["ilocation"] = self.index_location
@@ -307,13 +299,12 @@ class BaseNBlockCodec:
 
         return sector1
 
-    def encode(self,data:bytes,index_start:int=0,fast:bool=True)->list[list[int]]:
+    def encode(self,data:bytes,index_start:int=0)->list[list[int]]:
         """ Encodes the given data using the outer and inner codes.
 
         Args:
             data (bytes): The input data to be encoded.
             index_start (int, optional): The starting index for the encoded chunks. Defaults to 0.
-            fast (bool, optional): If True, use the fast outer code encoder. Defaults to True.  There should be no reason to use slow encoder.
 
         Returns:
             list[list[int]]: The encoded chunks of data.
@@ -358,11 +349,11 @@ class BaseNBlockCodec:
         #1. Reshape data 
         logging.debug("applying outer code to {} bytes".format(len(data)))
         # reshape data so columns can be coded independently.
-        if self.outer_coder.c_exp==8:
+        if self.outer_alphabet_size_bytes==1:
             data_np = np.frombuffer(data,dtype=np.uint8)
             assert len(data_np)%self.data_chunk_size == 0
             data_np = data_np.reshape(-1,self.data_chunk_size)
-        elif self.outer_coder.c_exp==16:
+        elif self.outer_alphabet_size_bytes==2:
             data_np = np.frombuffer(data,dtype=np.uint16)
             if self.data_chunk_size%2!=0:
                 raise ValueError("data_chunk_size must be even for 16 bit outer code.")
@@ -374,10 +365,8 @@ class BaseNBlockCodec:
             raise ValueError("Unsupported outer code byte size.")
 
         #2. apply the outer code (encode columns of data)
-        if fast:
-            data_enc_cols = np.array([self.outer_coder_fast.encode(dc) for dc in data_np.transpose()],dtype=data_np.dtype)
-        else:
-            data_enc_cols = np.array([self.outer_coder.encode(dc) for dc in data_np.transpose()],dtype=data_np.dtype)
+        data_enc_cols = np.array([self.outer_coder_fast.encode(dc) for dc in data_np.transpose()],dtype=data_np.dtype)
+
         data_enc_chunks = data_enc_cols.transpose()
         
         logging.debug("outer coded strands: {}".format(data_enc_chunks.shape[0]))
@@ -415,7 +404,7 @@ class BaseNBlockCodec:
 
         return ic_chunks
 
-    def decode(self, data: list[list[int]], index_start: int = 0, n_strands: int|None = None, fast: bool = False) -> Tuple[bytes|None,ArrayLike,ArrayLike,ArrayLike]:
+    def decode(self, data: list[list[int]], index_start: int = 0, n_strands: int|None = None) -> Tuple[bytes|None,ArrayLike,ArrayLike,ArrayLike]:
         """
         Decodes the given data.
 
@@ -423,7 +412,6 @@ class BaseNBlockCodec:
             data (list[list[int]]): The encoded data to be decoded.
             index_start (int, optional): The starting index for decoding. Defaults to 0.
             n_strands (int, optional): The number of strands expected. Defaults to n_strands set in constructor.
-            fast: (bool, optional): If True, use the fast outer code decoder, but erasures are treated as substitutions. Defaults to False.
 
         Returns:
             bytes|None: The decoded data. Or None if decoding failed.
@@ -490,32 +478,28 @@ class BaseNBlockCodec:
         # report erasures (lost strands) in outer code
         logging.info("erasures (lost) chunks: {}".format(erasures))
 
-        if self.outer_coder.c_exp==8:
+        if self.outer_alphabet_size_bytes==1:
             outer_dtype = np.uint8
-        elif self.outer_coder.c_exp==16:
+        elif self.outer_alphabet_size_bytes==2:
             outer_dtype = np.uint16
         else:
             raise ValueError("Unsupported outer code byte size.")
-        data_np_encoded = np.array([np.frombuffer(c, dtype=outer_dtype) for c in ordered_chunks_bytes]).transpose()
-        
-        if fast:
-            has_erasuers = len(erasures)>0
-            erasures_bool = np.zeros(data_np_encoded.shape[1],dtype=bool)
-            if has_erasuers:
-                erasures_bool[erasures] = True
-            data_decoded_results = [self.outer_coder_fast.decode(dc,errors=True,erasures=erasures_bool) for dc in data_np_encoded]
-            data_errata_col_pos = [] #galois doesn't report error positions
-            data_num_errors = [int(x[1]) for x in data_decoded_results]
-            if -1 in data_num_errors:
-                logging.error("Fast mode outer code decode failed on at least one column.")
-                return None, erasures, data_num_errors, chunk_errors
-                #raise ValueError(f"Fast mode outer code decode failed on at least one column.  numerrors:{data_num_errors}")
-            logging.info("Fast mode found {} outer code column errors.".format(data_num_errors))
-            data_decoded_chunks = np.array([np.array(d[0]) for d in data_decoded_results],dtype=outer_dtype).transpose()
-        else:
-            data_decoded_results = [self.outer_coder.decode(dc, erase_pos=erasures) for dc in data_np_encoded]
-            data_errata_col_pos = [e[2] for e in data_decoded_results]
-            data_decoded_chunks = np.array([d[0] for d in data_decoded_results],dtype=outer_dtype).transpose()
+        data_np_encoded = np.array([np.frombuffer(c, dtype=outer_dtype) for c in ordered_chunks_bytes]).transpose() 
+
+        has_erasuers = len(erasures)>0
+        erasures_bool = np.zeros(data_np_encoded.shape[1],dtype=bool)
+        if has_erasuers:
+            erasures_bool[erasures] = True
+        data_decoded_results = [self.outer_coder_fast.decode(dc,errors=True,erasures=erasures_bool) for dc in data_np_encoded]
+        data_errata_col_pos = [] #galois doesn't report error positions
+        data_num_errors = [int(x[1]) for x in data_decoded_results]
+        if -1 in data_num_errors:
+            logging.error("Outer code decode failed on at least one column.")
+            return None, erasures, data_num_errors, chunk_errors
+            #raise ValueError(f"Fast mode outer code decode failed on at least one column.  numerrors:{data_num_errors}")
+        logging.info("Found {} outer code column errors.".format(data_num_errors))
+        data_decoded_chunks = np.array([np.array(d[0]) for d in data_decoded_results],dtype=outer_dtype).transpose()
+
         data_decoded = data_decoded_chunks.flatten().tobytes()
 
         errors = []
@@ -532,10 +516,8 @@ class BaseNBlockCodec:
             else:
                 logging.info("Outer code errors found on strand {}, byte {}.".format(*e))
 
-        if fast:
-            return data_decoded, erasures, data_num_errors, chunk_errors # pyright: ignore[reportPossiblyUnboundVariable] 
-        else:
-            return data_decoded, erasures, errors, chunk_errors
+        return data_decoded, erasures, data_num_errors, chunk_errors # pyright: ignore[reportPossiblyUnboundVariable] 
+
     
     def extract_index_dna(self, dna: str|bytes, words:list[str], alternate_words:list[str], error_check: bool|Literal["erasures"] = False, padding: Literal["left","right"]="right") -> int:
         """
