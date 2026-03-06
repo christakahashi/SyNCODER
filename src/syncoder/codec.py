@@ -1,6 +1,3 @@
-import os
-import struct
-import itertools
 import logging
 import typing
 from . import sector01
@@ -251,7 +248,11 @@ class BaseNBlockCodec:
         else:
             logging.debug("{} symbols wasted per strand".format( _wasted_symbols))
 
-    def generate_sector1(self, alphabets,vendor_id = "UNKNOWN",primer_len=40):
+    def generate_sector1(self, alphabets,vendor_id = "UNKNOWN", primer_len=40, file_meta_data=None):
+        #change to lazy imports when python 3.15 is common.
+        #these don't take particularly long to import but i don't want to bloat things more.
+        import sys
+        import uuid
         alen = len(alphabets[0])
         abases = len(alphabets[0][0])
 
@@ -262,10 +263,20 @@ class BaseNBlockCodec:
                 if len(s) != abases:
                     raise ValueError("All elements of alphabets must be the same number of bases")
         
+        files_nstrands = 0
+        if file_meta_data is not None:
+            for block_name, block_meta in file_meta_data.items():
+                strand_count_code_block = block_meta["blen"]//self.data_chunk_size+self.outer_coder.nsym
+                strand_count = strand_count_code_block*len(block_meta["istart"])
+                files_nstrands+=strand_count
+        
         #encode as one string to save space.
         alphabets = [" ".join(x) for x in alphabets]
 
         sector1 = sector01.get_sector_1_obj()
+        uid = str(uuid.uuid4())
+        sector1["id"] = uid+":xxxxx"
+        sector1["codec"]["ver"] = sys.modules['.'.join(__name__.split('.')[:-1])].__version__
         codec_params = sector1["codec"]["params"]
         codec_params["alphs"] = alphabets
         codec_params["innerd"] = self.inner_coder.d
@@ -277,13 +288,23 @@ class BaseNBlockCodec:
         codec_params["ilocation"] = self.index_location
         sector1["vendorid"] = vendor_id
         seq_params = sector1["seq"]
-        osize = self.inner_coder.n*abases+primer_len
+        osize = self.inner_n*abases+primer_len
         seq_params["osizemin"] = osize
         seq_params["osizemedian"] = osize
         seq_params["osizemax"] = osize
+        seq_params["ocount"] = files_nstrands
         #these two don't make sense
         seq_params["orepmin"] = 1
         seq_params["orepmax"] = 100
+
+        #add this in when file meta is present.
+        #s1_len = len(json.dumps(sector1,separators=(',', ':')).encode('utf-8'))
+        #s1_strands = s1_len//self.data_chunk_size + (1 if s1_len%self.data_chunk_size>0 else 0)
+        #s1_redundant_strands = 50*(s1_len//self.block_capacity_bytes + (1 if s1_len%self.block_capacity_bytes>0 else 0))
+        #s1_strands += s1_redundant_strands
+
+        #sector1["id"] = uid+f":{s1_strands:05d}"
+
         return sector1
 
     def encode(self,data:bytes,index_start:int=0,fast:bool=True)->list[list[int]]:

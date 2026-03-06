@@ -19,7 +19,7 @@ JSON_template_mandatory = \
     "coverageinfo": "30x"
   },
   "codec": {
-    "id": null,
+    "id": "ATGTATAGCGCTACGAGCTGCAGTCATCTGATCTC",
     "vendor": "UW MISL",
     "name": "SyNCODER",
     "ver": null,
