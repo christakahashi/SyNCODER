@@ -2,7 +2,10 @@ import json
 
 s1fp = "ACAACGCTCAAATCAGGG"
 s1rp = "GTGACGGTAGGTGAAATC"
+s1fp_ext = "GCACAACGCTCAAATCAGGG"
+s1rp_ext = "CGGTGACGGTAGGTGAAATC"
 s1rp_rc = "GATTTCACCTACCGTCAC"
+s1rp_rc_ext = "GATTTCACCTACCGTCACCG"
 JSON_template_mandatory = \
 """
 {

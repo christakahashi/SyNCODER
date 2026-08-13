@@ -1,5 +1,6 @@
 import logging
 import typing
+import json
 from . import sector01
 from typing import Optional,Union, Callable, Tuple, Literal, cast  #requires python 3.8 or later
 
@@ -126,15 +127,14 @@ class BaseNBlockCodec:
             n_strands (int): Number of "strands" stored by this codec including redundant strands.
             max_strand_index (Optional[int]): Maximum guaranteed index. Default: n_strands.
             index_type (str): Type of index to use. Options: "binary", "inner symbol", "inner". Default: "binary".
+                index_type "binary" integrates the index into the data stream as a binary number.  
+                    This may help packing efficiency.
+                index_type "inner symbol"/"inner" integrates the index inner code symbol symbols.
+                    This may help packing efficiency and always simplifies index extraction.
             index_location (str): Location of the index within the inner code. Options: "middle", "beginning", "end". Default: "middle".
-
-            index_type "binary" integrates the index into the data stream as a binary number.  
-                This may help packing efficiency.
-            index_type "inner symbol"/"inner" integrates the index inner code symbol symbols.
-                This may help packing efficiency and always simplifies index extraction.
-            index_location "middle" (default) places the index after the data symbols but before the redundancy symbols.
-            index_location "beginning" places the index before the data symbols.
-            index_location "end" places the index after the redundancy symbols. (not implemented)
+                index_location "middle" (default) places the index after the data symbols but before the redundancy symbols.
+                index_location "beginning" places the index before the data symbols.
+                index_location "end" places the index after the redundancy symbols. (not implemented)
         """
         if n_strands<=255:
             self.outer_alphabet_size_bytes = 1
@@ -245,6 +245,9 @@ class BaseNBlockCodec:
         #these don't take particularly long to import but i don't want to bloat things more.
         import sys
         import uuid
+        import json
+        from collections import OrderedDict
+
         alen = len(alphabets[0])
         abases = len(alphabets[0][0])
 
@@ -265,9 +268,14 @@ class BaseNBlockCodec:
         #encode as one string to save space.
         alphabets = [" ".join(x) for x in alphabets]
 
-        sector1 = sector01.get_sector_1_obj()
-        uid = str(uuid.uuid4())
-        sector1["id"] = uid+":xxxxx"
+        sector1 = OrderedDict(sector01.get_sector_1_obj())
+        #reserve octets 4-5 for the number of strands in sector 1.
+        u = bytearray(uuid.uuid4().bytes)
+        u[6] = 8<<4
+        u[8] = (u[8] & 0b00111111) | 0b10000000
+        u[4] = 0
+        u[5] = 0        
+        sector1["id"] = str(uuid.UUID(bytes=bytes(u) ))
         sector1["codec"]["ver"] = sys.modules['.'.join(__name__.split('.')[:-1])].__version__
         codec_params = sector1["codec"]["params"]
         codec_params["alphs"] = alphabets
@@ -289,6 +297,7 @@ class BaseNBlockCodec:
         seq_params["orepmin"] = 1
         seq_params["orepmax"] = 100
 
+        sector1.move_to_end("id",last=False) #guarentee this is in the first code block.
         #add this in when file meta is present.
         #s1_len = len(json.dumps(sector1,separators=(',', ':')).encode('utf-8'))
         #s1_strands = s1_len//self.data_chunk_size + (1 if s1_len%self.data_chunk_size>0 else 0)
@@ -651,7 +660,7 @@ def longest_binder(a:str,b:str):
 
 
 
-def b32_to_DNA_optimize(file_data:list[ArrayLike],words:list[str], alternate_words:list[str], mask:Union[ArrayLike,None]=None, nmasked=-1, penalty_fn:Union[Callable[[str],int],None]=None)->list[Tuple[bytes,int]]:
+def b32_to_DNA_optimize(file_data:list[ArrayLike],words:list[str], alternate_words:list[str], mask:Union[ArrayLike,None]=None, nmasked:int =-1, penalty_fn:Union[Callable[[str],int],None]=None)->list[Tuple[bytes,int]]:
   """ 
     TODO: rename to bN_to_DNA_optimize, and add test.
     file_data: 2d list of integral types (symbols)
@@ -912,3 +921,80 @@ def remove_bytes(data:bytes, insert:int|bytes, chunk_len:int, num_inserts:int) -
         del data[ins_index:ins_index + insert_len]
     return bytes(data)
 
+
+########################
+# Sector 0 and 1 funcs #
+########################
+
+
+def sector_1_codec():
+    """Returns a BaseNBlockCodec object with parameters suitable for encoding sector 1 of the SyNCODER format."""
+    return BaseNBlockCodec(inner_alphabet_size=32,
+                             inner_d=5,
+                             inner_n=70//3, 
+                             n_strands=255,
+                             n_redundant_strands=50,
+                             max_strand_index=2**(5*3)-1,#32,767 strands max.
+                             index_type="inner")
+
+def generate_sector1(codec:BaseNBlockCodec,alphabets:list[list[str]],vendor_id:str, file_meta_data:dict, primer_len:int=40, length:int=-1) -> list[bytes]:
+    """Generates the sector 1 object for the SyNCODER format.
+
+    Args:
+        alphabets (list of list of str): A list of alphabets, where each alphabet is a list of strings representing the symbols in that alphabet.
+        vendor_id (str): A DNA string representing the vendor ID. 
+        file_meta_data (dict): A dictionary containing metadata about the files being encoded.
+        primer_len (int, optional): The length of the primers to be used in sector 1. Defaults to 40.
+        length (int, optional): The number of strands in the sector 1 object. If -1, the number of strands will be determined automatically. Defaults to -1.
+
+    Returns:
+        list[bytes]: A list of bytes representing the encoded sector 1 object.
+    """
+
+    assert len(vendor_id) == 35 #required by spec.
+    s1codec = sector_1_codec()
+    sector1 = codec.generate_sector1(alphabets,vendor_id,primer_len,file_meta_data)
+    sector1["addl"] = {"fmeta": file_meta_data}
+
+    if length>=0:
+        nstarnds_ashex = hex(length)[2:].rjust(4,'0')
+        id_parts = sector1["id"].split("-")
+        id_parts[1] = nstarnds_ashex
+        sector1["id"] = "-".join(id_parts)
+
+    s1json = json.dumps(sector1,separators=(',', ':')).encode('utf-8')
+
+    padding = s1codec.data_chunk_size - (len(s1json) % s1codec.data_chunk_size)
+    if padding != s1codec.data_chunk_size:
+        # Distribute padding bytes by inserting at most one space after commas
+        new_chars = bytearray(b" ") #put one space at the start.
+        rem = padding-1
+        for c in s1json:
+            new_chars.append(c)
+            if c == ',' and rem > 0:
+                new_chars.append(ord(' ')) # add a space after the comma
+                rem -= 1
+        if rem > 0: #append any remaining spaces at the end (probably wont happen)
+            new_chars.extend(b" " * rem)
+        s1json_padded = bytes(new_chars)
+        assert json.loads(s1json_padded) == sector1, "Padded JSON does not match original data"
+        s1json = s1json_padded
+
+    encoded_s1 = []
+    cbstart = 0
+    istart = 0
+    while cbstart < len(s1json): 
+        encoded_s1_block= s1codec.encode(s1json[cbstart:(cbstart+s1codec.block_capacity_bytes)],index_start=istart) 
+        istart+=len(encoded_s1_block)
+        cbstart+=s1codec.block_capacity_bytes
+        encoded_s1 += encoded_s1_block
+    
+    #reoncode sector 1 with updated id.
+    if length<0:
+        #update sector1 id with number of strands in s1.
+        return generate_sector1(codec,alphabets,vendor_id,file_meta_data,primer_len,length=len(encoded_s1))
+
+    #convert to base32 pad with a random base to meet the 70 base requirement for sector 1.
+    s1DNA = [x[0]+bytes(np.random.choice([b"A",b"C",b"T",b"G"])) for x in b32_to_DNA_optimize(encoded_s1,_default_b32_alphabet,_default_b32_alphabet_alt)]
+    s1DNA_with_primers = [sector01.s1fp_ext.encode("utf-8") + x + sector01.s1rp_rc_ext.encode("utf-8") for x in s1DNA]
+    return s1DNA_with_primers
