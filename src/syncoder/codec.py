@@ -297,6 +297,9 @@ class BaseNBlockCodec:
         seq_params["orepmin"] = 1
         seq_params["orepmax"] = 100
 
+        if file_meta_data is not None:
+            sector1["addl"] = {"fmeta": file_meta_data}
+
         sector1.move_to_end("id",last=False) #guarentee this is in the first code block.
         #add this in when file meta is present.
         #s1_len = len(json.dumps(sector1,separators=(',', ':')).encode('utf-8'))
@@ -954,7 +957,6 @@ def generate_sector1(codec:BaseNBlockCodec,alphabets:list[list[str]],vendor_id:s
     assert len(vendor_id) == 35 #required by spec.
     s1codec = sector_1_codec()
     sector1 = codec.generate_sector1(alphabets,vendor_id,primer_len,file_meta_data)
-    sector1["addl"] = {"fmeta": file_meta_data}
 
     if length>=0:
         nstarnds_ashex = hex(length)[2:].rjust(4,'0')
