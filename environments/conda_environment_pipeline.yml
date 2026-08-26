@@ -1,0 +1,14 @@
+name: codec-pipeline
+channels:
+  - bioconda
+  - conda-forge 
+dependencies:
+  - bioconda::pandaseq
+  - bioconda::cutadapt
+  - bioconda::vsearch
+  - python>=3.13
+  - numpy=2.*
+  - numba=0.62.*
+  - pip:
+    - galois>=0.4.8
+

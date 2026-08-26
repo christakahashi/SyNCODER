@@ -2,16 +2,15 @@
 name = "syncoder"
 dynamic = ["version"]
 dependencies = [
-    "numpy>=1.20",
-    "galois>=0.4",
-    "reedsolo>=1.7"
+    "numpy>=2",
+    "galois>=0.4.8" 
 ]
 description = "A codec for DNA data storage"
 authors = [
     { name="Christopher Takahashi", email="cnt@uw.edu" }
 ]
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 license = "BSD-3-Clause"
 license-files = ["LICENSE"]
 
