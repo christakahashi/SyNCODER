@@ -115,7 +115,8 @@ class BaseNBlockCodec:
                  n_strands:int=100,
                  max_strand_index:Optional[int]=None,
                  index_type:Literal["binary", "inner symbol", "inner"]="binary",
-                 index_location:Literal["middle", "beginning", "end"]="middle"): 
+                 index_location:Literal["middle", "beginning", "end"]="middle",
+                 lazy_outer:bool = False): 
         """  
         Initialize the Codec object.
 
@@ -135,6 +136,7 @@ class BaseNBlockCodec:
                 index_location "middle" (default) places the index after the data symbols but before the redundancy symbols.
                 index_location "beginning" places the index before the data symbols.
                 index_location "end" places the index after the redundancy symbols. (not implemented)
+            lazy_outer (bool): If True, the outer code will be initialized lazily. Default: False.
         """
         if n_strands<=255:
             self.outer_alphabet_size_bytes = 1
@@ -216,10 +218,16 @@ class BaseNBlockCodec:
             raise ValueError("data_chunk_size must be even for 16 bit outer code.")
         #c=0 to match reedsolo library's default for code compatibility with prior versions of this codec.
         #   This may be changed in a future major version.
-        self.outer_coder_fast = galois.ReedSolomon(n=2**(self.outer_alphabet_size_bytes*8)-1,
-                                                   d=n_redundant_strands+1,
-                                                   c=0,
-                                                   field=galois.GF(2**(self.outer_alphabet_size_bytes*8)))
+
+        self.outer_d = n_redundant_strands+1
+        self.outer_field = galois.GF(2**(self.outer_alphabet_size_bytes*8))
+        if lazy_outer:
+            self.outer_coder_fast = None
+        else:
+            self.outer_coder_fast = galois.ReedSolomon(n=2**(self.outer_alphabet_size_bytes*8)-1,
+                                                       d=self.outer_d,
+                                                       c=0,
+                                                       field=self.outer_field)
 
     def __compute_waste(self):
         k = self.inner_k
@@ -261,7 +269,7 @@ class BaseNBlockCodec:
         files_nstrands = 0
         if file_meta_data is not None:
             for block_name, block_meta in file_meta_data.items():
-                strand_count_code_block = block_meta["blen"]//self.data_chunk_size+self.outer_coder_fast.d-1
+                strand_count_code_block = block_meta["blen"]//self.data_chunk_size+self.outer_d-1
                 strand_count = strand_count_code_block*len(block_meta["istart"])
                 files_nstrands+=strand_count
         
@@ -282,7 +290,7 @@ class BaseNBlockCodec:
         codec_params["innerd"] = self.inner_coder.d
         codec_params["innern"] = self.inner_n
         codec_params["nstrands"] = self.n_strands
-        codec_params["neccstrand"] = self.outer_coder_fast.d-1
+        codec_params["neccstrand"] = self.outer_d-1
         codec_params["imax"] = self.max_strand_index
         codec_params["itype"] = self.index_type
         codec_params["ilocation"] = self.index_location
@@ -357,6 +365,13 @@ class BaseNBlockCodec:
         #  |<rrrrrrrrrrrrrrrrr self.data_chunk_size rrrrrrrrrrrrraaaRRRRRRRR>|
         #  ...
         #  |<rrrrrrrrrrrrrrrrr self.data_chunk_size rrrrrrrrrrrrraaaRRRRRRRR>|
+
+        #lazy init outer code
+        if self.outer_coder_fast is None:
+            self.outer_coder_fast = galois.ReedSolomon(n=2**(self.outer_alphabet_size_bytes*8)-1,
+                                                        d=self.outer_d,
+                                                        c=0,
+                                                        field=self.outer_field)
 
         #1. Reshape data 
         logging.debug("applying outer code to {} bytes".format(len(data)))
@@ -434,6 +449,14 @@ class BaseNBlockCodec:
         Raises:
             None
         """
+
+        #lazy init outer code
+        if self.outer_coder_fast is None:
+            self.outer_coder_fast = galois.ReedSolomon(n=2**(self.outer_alphabet_size_bytes*8)-1,
+                                                        d=self.outer_d,
+                                                        c=0,
+                                                        field=self.outer_field)
+
         if n_strands is None:
             n_strands = self.n_strands
 
