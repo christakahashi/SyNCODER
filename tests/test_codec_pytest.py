@@ -26,8 +26,8 @@ def encode_decode(index_type,index_loc:Literal["beginning","middle"]="middle"):
 
   coded = c.encode( in_text )
   assert c.extract_index(coded[27]) == 27 #test extract index while we're at it
-  dnadata = syncoder.b32_to_DNA(coded,syncoder._default_b32_alphabet,syncoder._default_b32_alphabet_alt)
-  assert c.extract_index_dna(dnadata[27],
+  dnadata = syncoder.bN_to_DNA_optimize(coded,syncoder._default_b32_alphabet,syncoder._default_b32_alphabet_alt)
+  assert c.extract_index_dna(dnadata[27][0],
                             alphabet = syncoder._default_b32_alphabet,
                             alternate_alphabet= syncoder._default_b32_alphabet_alt,
                             error_check=True) == 27
@@ -56,7 +56,7 @@ def test_encode_decode_fast_erase():
 
   in_text = np.random.bytes( c.block_capacity_bytes ) 
   coded = c.encode( in_text ) 
-  dnadata = syncoder.b32_to_DNA(coded,syncoder._default_b32_alphabet,syncoder._default_b32_alphabet_alt)
+  dnadata = syncoder.bN_to_DNA_optimize(coded,syncoder._default_b32_alphabet,syncoder._default_b32_alphabet_alt)
  
   random.shuffle(coded)
   coded = coded[:-90] #erase a random strands
@@ -72,9 +72,9 @@ def test_coded_to_bases():
   #TODO: test optimize too
 
   test_encoded_data = np.random.randint(0,32,(10,31),dtype=np.uint8)
-  DNA_with_scores = codec.b32_to_DNA_optimize(test_encoded_data,codec._default_b32_alphabet,codec._default_b32_alphabet_alt) # type: ignore
+  DNA_with_scores = codec.bN_to_DNA_optimize(test_encoded_data,codec._default_b32_alphabet,codec._default_b32_alphabet_alt) # type: ignore
   DNA = [x[0] for x in DNA_with_scores]
-  test_decoded_data  = codec.dna_to_b32(DNA,codec._default_b32_alphabet,codec._default_b32_alphabet_alt) 
+  test_decoded_data  = codec.dna_to_bN(DNA,codec._default_b32_alphabet,codec._default_b32_alphabet_alt) 
   print(test_encoded_data.flatten())
   print( np.array(test_decoded_data).flatten())
   assert np.array_equal( test_encoded_data.flatten(), np.array(test_decoded_data).flatten() )
@@ -143,7 +143,7 @@ def test_inserts():
   data_decodec,__oe,__oer,__ie = coder.decode(enc_d)
   assert data_decodec == inserted_data
 
-  test_dna_out = codec.b32_to_DNA_optimize(enc_d,codec._default_b32_alphabet,codec._default_b32_alphabet_alt,mask=imask,nmasked=n_inserts) # type: ignore
+  test_dna_out = codec.bN_to_DNA_optimize(enc_d,codec._default_b32_alphabet,codec._default_b32_alphabet_alt,mask=imask,nmasked=n_inserts) # type: ignore
   test_dna = [x[0] for x in test_dna_out]
   for strand in test_dna[:n_inserts]:
     assert strand.decode().startswith(insert)
@@ -167,7 +167,7 @@ def test_nonzero_index():
   ded_d = coder.decode(enc_d,index_start=2500)
   assert ded_d[0] == test_data
 
-  dna = codec.b32_to_DNA_optimize(enc_d,codec._default_b32_alphabet,codec._default_b32_alphabet_alt)  #type: ignore
+  dna = codec.bN_to_DNA_optimize(enc_d,codec._default_b32_alphabet,codec._default_b32_alphabet_alt)  #type: ignore
 
   index = coder.extract_index_dna(dna[0][0],
                                   alphabet = syncoder._default_b32_alphabet,

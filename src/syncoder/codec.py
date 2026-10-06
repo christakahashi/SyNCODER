@@ -3,6 +3,7 @@ import typing
 import json
 from . import sector01
 from typing import Optional,Union, Callable, Tuple, Literal, cast  #requires python 3.8 or later
+from warnings import deprecated
 
 
 import numpy as np
@@ -330,12 +331,6 @@ class BaseNBlockCodec:
         Returns:
             list[list[int]]: The encoded chunks of data.
         """
-
-        #TODO: add option to put the index in multiples of inner symbols instead of bytes.
-        #      this would give options to improve data packing depending on parameters.
-        #      even better this could be autocomputed.
-        #TODO: consider putting outer code redundancy striped vertically bytewise so that
-        #      lost strands with odd numbers of bytes don't erase bytes from neighboring strands.
 
 
         #encode process outline:
@@ -685,27 +680,33 @@ def longest_binder(a:str,b:str):
   A = reverse_complement(a) 
   return longest_match(A,b)
 
-
-
+@deprecated("Use bN_to_DNA_optimize instead")
 def b32_to_DNA_optimize(file_data:list[ArrayLike],alphabet:list[str], alternate_alphabet:list[str], mask:Union[ArrayLike,None]=None, nmasked:int =-1, penalty_fn:Union[Callable[[str],int],None]=None)->list[Tuple[bytes,int]]:
+    return bN_to_DNA_optimize(file_data,alphabet,alternate_alphabet,mask,nmasked,penalty_fn)
+
+def bN_to_DNA_optimize(file_data:list[ArrayLike],alphabet:list[str], alternate_alphabet:list[str], mask:Union[ArrayLike,None]=None, nmasked:int =-1, penalty_fn:Union[Callable[[str],int],None]=None)->list[Tuple[bytes,int]]:
   """ 
-    TODO: rename to bN_to_DNA_optimize, and add test.
+    Convert a list of lists of in base N to DNA.  The base (N) is determined by the length of the alphabet.
+    if mask or penalty_fn is provided, symbols from alternate_alphabet will be used to minimize the penalty function, or as specified by the mask.
+
     file_data: 2d list of integral types (symbols)
     mask: list of ints. 0 for alphabet, 1 for alternate alphabet, -1 for don't care.  None for no mask.
     nmasked: number of masked symbols.  -1 for all.
     penalty_fn: function that takes a DNA sequence and returns a score.  penalty_fn(DNA_seq:str)->int
   """      
   if nmasked<0: #mask all
-    return [b32_to_DNA_optimize_single(x,alphabet,alternate_alphabet,mask,penalty_fn=penalty_fn) for x in file_data]
+    return [bN_to_DNA_optimize_single(x,alphabet,alternate_alphabet,mask,penalty_fn=penalty_fn) for x in file_data]
   else:
-      masked_part = [b32_to_DNA_optimize_single(x,alphabet,alternate_alphabet,mask,penalty_fn=penalty_fn) for x in file_data[0:nmasked]]
-      unmasked_part = [b32_to_DNA_optimize_single(x,alphabet,alternate_alphabet,mask=None,penalty_fn=penalty_fn) for x in file_data[nmasked:]]
+      masked_part = [bN_to_DNA_optimize_single(x,alphabet,alternate_alphabet,mask,penalty_fn=penalty_fn) for x in file_data[0:nmasked]]
+      unmasked_part = [bN_to_DNA_optimize_single(x,alphabet,alternate_alphabet,mask=None,penalty_fn=penalty_fn) for x in file_data[nmasked:]]
       return masked_part + unmasked_part
 
-
+@deprecated("Use bN_to_DNA_optimize_single instead")
 def b32_to_DNA_optimize_single(strand_data:ArrayLike, alphabet:list[str], alternate_alphabet:list[str], mask:Union[ArrayLike,None]=None ,penalty_fn=None)->Tuple[bytes,int]:
+  return bN_to_DNA_optimize_single(strand_data, alphabet, alternate_alphabet, mask, penalty_fn)
+
+def bN_to_DNA_optimize_single(strand_data:ArrayLike, alphabet:list[str], alternate_alphabet:list[str], mask:Union[ArrayLike,None]=None ,penalty_fn=None)->Tuple[bytes,int]:
   """
-    TODO: rename to bN_to_DNA_optimize_single
     strand_data: 1d list of integral types
     mask: list of ints. 0 for alphabet, 1 for alternate alphabet, -1 for don't care.  None for no mask.
   """
@@ -759,6 +760,7 @@ def b32_to_DNA_optimize_single(strand_data:ArrayLike, alphabet:list[str], altern
     
   return dna_seq,score
 
+@deprecated("Use bN_to_DNA_optimize instead")
 def b32_to_DNA(file_data:list[list[int]],alphabet:list[str], alternate_alphabet:list[str], avoid_seq:list[str] = [])->list[str]:
     """ with avoids, TODO: depricate """
     dna = []
@@ -806,6 +808,7 @@ def dna_to_bN(dna: Union[list[str],list[bytes]] ,alphabet:list[str], alternate_a
         bNdatalist.append(bNdata)
     return bNdatalist
 
+@deprecated("Use dna_to_bN instead")
 def dna_to_b32(dna: Union[list[str],list[bytes]] ,alphabet:list[str], alternate_alphabet:list[str])->list[list[int]]:
     assert len(alphabet) == 32
     return dna_to_bN(dna,alphabet,alternate_alphabet)
