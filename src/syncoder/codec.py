@@ -16,7 +16,7 @@ import galois
 
 
 lipsum = b"Lorem ipsum dolor sit amet, consectetuer adipiscing elit. Aenean commodo ligula eget dolor. Aenean massa. Cum sociis natoque penatibus et magnis dis parturient montes, nascetur ridiculus mus. Donec quam felis, ultricies nec, pellentesque eu, pretium quis, sem. Nulla consequat massa quis enim. Donec pede justo, fringilla vel, aliquet nec, vulputate eget, arcu. In enim justo, rhoncus ut, imperdiet a, venenatis vitae, justo. Nullam dictum felis eu pede mollis pretium. Integer tincidunt. Cras dapibus. Vivamus elementum semper nisi. Aenean vulputate eleifend tellus. Aenean leo ligula, porttitor eu, consequat vitae, eleifend ac, enim. Aliquam lorem ante, dapibus in, viverra quis, feugiat a, tellus. Phasellus viverra nulla ut metus varius laoreet. Quisque rutrum. Aenean imperdiet. Etiam ultricies nisi vel augue. Curabitur ullamcorper ultricies nisi. Nam eget dui. Etiam rhoncus. Maecenas tempus, tellus eget condimentum rhoncus, sem quam semper libero, sit amet adipiscing sem neque sed ipsum." #cspell:disable-line
-
+logger = logging.getLogger(__name__)
 
 def _int_to_baseN(n:int,base:int,length:int=-1)->list[int]:
     """Converts an integer to a base N number in little endian order.
@@ -89,9 +89,9 @@ def compute_num_strands(nbytes:int,
     #max_m=2**16-1
     max_m = int( np.ceil(nbytes*8 / bits_per_strand_min + n_redundant_strands) )
     
-    _logger = logging.getLogger()
-    _t = _logger.getEffectiveLevel()
-    _logger.setLevel(logging.ERROR) #suppress debug messages
+
+    _t = logger.getEffectiveLevel()
+    logger.setLevel(logging.ERROR) #suppress debug messages
     while min_m<max_m:
         mid = (min_m+max_m)//2
         codec = BaseNBlockCodec(inner_alphabet_size=inner_alphabet_size,
@@ -103,7 +103,7 @@ def compute_num_strands(nbytes:int,
             min_m = mid+1
         else:
             max_m = mid
-    _logger.setLevel(_t) #restore logger level
+    logger.setLevel(_t) #restore logger level
     return min_m
 
 class BaseNBlockCodec:
@@ -196,22 +196,23 @@ class BaseNBlockCodec:
         if self.index_type == "binary":
             #number of bytes needed to store the index
             self.index_bits = np.ceil(np.log2(max_strand_index)).astype(int)
-            logging.debug("bits per strand used for indexing: {}".format(self.index_bits))
+            logger.debug("bits per strand used for indexing: {}".format(self.index_bits))
             self.data_chunk_size = int(k*np.log2(q)-self.index_bits) // 8
         elif self.index_type == "inner":
             self.index_symbols = len(_int_to_baseN(max_strand_index,q))
             self.data_symbols = k-self.index_symbols
             self.data_chunk_size = int(self.data_symbols*np.log2(q)) // 8
             assert k == self.data_symbols + self.index_symbols
-            logging.debug("data chunk size in symbols: {}".format(self.data_symbols))
-            logging.debug(f"number of inner symbols: {k}; index symbols: {self.index_symbols}")
+            logger.debug("data chunk size in symbols: {}".format(self.data_symbols))
+            logger.debug(f"number of inner symbols: {k}; index symbols: {self.index_symbols}")
 
-        logging.debug( "strand capacity in bytes: {}".format(self.data_chunk_size) )
+        logger.debug( "strand capacity in bytes: {}".format(self.data_chunk_size) )
         #todo: only execute if logging level is debug or warning
-        self.__compute_waste()
+        if logger.isEnabledFor(logging.DEBUG) or logger.isEnabledFor(logging.WARNING):
+            self.__compute_waste()
 
         self.block_capacity_bytes = self.data_chunk_size*(self.n_strands - n_redundant_strands) 
-        logging.debug( "codec message size: {} bytes".format(self.block_capacity_bytes) )
+        logger.debug( "codec message size: {} bytes".format(self.block_capacity_bytes) )
 
         #init the outer coder 
         if self.outer_alphabet_size_bytes==2 and self.data_chunk_size%2!=0:
@@ -234,19 +235,19 @@ class BaseNBlockCodec:
         q = self.inner_coder.field.order
         if self.index_type == "binary":
             _wasted_bits = k*np.log2(q) - (self.data_chunk_size*8+self.index_bits )
-            logging.debug( "{} bits wasted per strand".format( _wasted_bits ) )
-            logging.debug( "Maximum strand index (using wasted bits): {}".format(2**(int(self.index_bits+_wasted_bits))))
+            logger.debug( "{} bits wasted per strand".format( _wasted_bits ) )
+            logger.debug( "Maximum strand index (using wasted bits): {}".format(2**(int(self.index_bits+_wasted_bits))))
             _wasted_symbols = _wasted_bits/np.log2(q)
         elif self.index_type == "inner":
             data_chunk_symbols_used = self.data_chunk_size*8/np.log2(q)  
             _wasted_symbols = self.data_symbols - data_chunk_symbols_used
-            logging.debug( f"Maximum strand index:{q**self.index_symbols}")
+            logger.debug( f"Maximum strand index:{q**self.index_symbols}")
         else:
             raise ValueError("Unknown index type: {}".format(self.index_type)) #should be impossible to get here.
         if  _wasted_symbols>=1:
-            logging.warning( "{} symbols wasted per strand.  Consider decreasing inner_n.".format( _wasted_symbols) )
+            logger.warning( "{} symbols wasted per strand.  Consider decreasing inner_n.".format( _wasted_symbols) )
         else:
-            logging.debug("{} symbols wasted per strand".format( _wasted_symbols))
+            logger.debug("{} symbols wasted per strand".format( _wasted_symbols))
 
     def generate_sector1(self, alphabets,vendor_id = "UNKNOWN", primer_len=40, file_meta_data=None):
         #change to lazy imports when python 3.15 is common.
@@ -374,7 +375,7 @@ class BaseNBlockCodec:
                                                         field=self.outer_field)
 
         #1. Reshape data 
-        logging.debug("applying outer code to {} bytes".format(len(data)))
+        logger.debug("applying outer code to {} bytes".format(len(data)))
         # reshape data so columns can be coded independently.
         if self.outer_alphabet_size_bytes==1:
             data_np = np.frombuffer(data,dtype=np.uint8)
@@ -396,7 +397,7 @@ class BaseNBlockCodec:
 
         data_enc_chunks = data_enc_cols.transpose()
         
-        logging.debug("outer coded strands: {}".format(data_enc_chunks.shape[0]))
+        logger.debug("outer coded strands: {}".format(data_enc_chunks.shape[0]))
 
         #3. apply the inner code
         chunks = []
@@ -497,9 +498,9 @@ class BaseNBlockCodec:
                     ordered_chunks[chunk_index] = chunk_bytes
                     chunk_errors[chunk_index] = chunk[1]
                 except IndexError:
-                    logging.info("strand index out of bounds:" + str(chunk_index))
+                    logger.info("strand index out of bounds:" + str(chunk_index))
             except OverflowError:
-                logging.info("chunk overflow for strand index:" + str(chunk_index)+ "intval: "+ str(chunk_int))
+                logger.info("chunk overflow for strand index:" + str(chunk_index)+ "intval: "+ str(chunk_int))
 
         # identify erasures
         erasures = []
@@ -511,7 +512,7 @@ class BaseNBlockCodec:
         ordered_chunks_bytes:list[bytes] = typing.cast(list[bytes],ordered_chunks)
 
         # report erasures (lost strands) in outer code
-        logging.info("erasures (lost) chunks: {}".format(erasures))
+        logger.info("erasures (lost) chunks: {}".format(erasures))
 
         if self.outer_alphabet_size_bytes==1:
             outer_dtype = np.uint8
@@ -529,10 +530,10 @@ class BaseNBlockCodec:
         data_errata_col_pos = [] #galois doesn't report error positions
         data_num_errors = [int(x[1]) for x in data_decoded_results]
         if -1 in data_num_errors:
-            logging.error("Outer code decode failed on at least one column.")
+            logger.error("Outer code decode failed on at least one column.")
             return None, erasures, data_num_errors, chunk_errors
             #raise ValueError(f"Fast mode outer code decode failed on at least one column.  numerrors:{data_num_errors}")
-        logging.info("Found {} outer code column errors.".format(data_num_errors))
+        logger.info("Found {} outer code column errors.".format(data_num_errors))
         data_decoded_chunks = np.array([np.array(d[0]) for d in data_decoded_results],dtype=outer_dtype).transpose()
 
         data_decoded = data_decoded_chunks.flatten().tobytes()
@@ -549,7 +550,7 @@ class BaseNBlockCodec:
             if e[0] in erasures:
                 pass
             else:
-                logging.info("Outer code errors found on strand {}, byte {}.".format(*e))
+                logger.info("Outer code errors found on strand {}, byte {}.".format(*e))
 
         return data_decoded, erasures, data_num_errors, chunk_errors # pyright: ignore[reportPossiblyUnboundVariable] 
 
@@ -753,7 +754,7 @@ def b32_to_DNA_optimize_single(strand_data:ArrayLike, words:list[str], alternate
       dna_seq = iteration_dna_seq
       score = iteration_best_score
     icount += 1
-  logging.debug(f"iteration {icount} picks: {iteration_best_picks}") 
+  logger.debug(f"iteration {icount} picks: {iteration_best_picks}") 
 
     
   return dna_seq,score
