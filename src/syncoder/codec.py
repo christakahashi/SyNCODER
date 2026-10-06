@@ -555,7 +555,7 @@ class BaseNBlockCodec:
         return data_decoded, erasures, data_num_errors, chunk_errors # pyright: ignore[reportPossiblyUnboundVariable] 
 
     
-    def extract_index_dna(self, dna: str|bytes, words:list[str], alternate_words:list[str], error_check: bool|Literal["erasures"] = False, padding: Literal["left","right"]="right") -> int:
+    def extract_index_dna(self, dna: str|bytes, alphabet:list[str], alternate_alphabet:list[str], error_check: bool|Literal["erasures"] = False, padding: Literal["left","right"]="right") -> int:
         """
         Extracts the index from the given DNA strand.
 
@@ -567,13 +567,13 @@ class BaseNBlockCodec:
             padding Literal["left","right"], optional): Assume any missing bases are left or right of index.  
                 Defaults to "right".
                 Note: padded sequences are unlikely to error correct properly.
-            words (list[str]): The primary set of base words used, in order, for encoding.
-            alternate_words (list[str]): The alternate (aka synonymous) set of words used, in order, for encoding.
+            alphabet (list[str]): The primary set of symbols used, in order, for encoding.
+            alternate_alphabet (list[str]): The alternate (aka synonymous) set of symbols used, in order, for encoding.
 
         Returns:
             int: The index. or -1 if error_check==True and unrecoverable error found.
         """
-        symbol_len:int = len(words[0])
+        symbol_len:int = len(alphabet[0])
         if isinstance(dna,bytes):
             dna= dna.decode()
         dna_s:str = cast(str,dna)
@@ -603,8 +603,8 @@ class BaseNBlockCodec:
             erasures = None
 
         ec = (has_erasures and error_check=="erasures") or (error_check==True)
-        #This could fail if padding makes a symbol not in words or alternate_words.
-        data = dna_to_bN([dna_s],words,alternate_words)[0]
+        #This could fail if padding makes a symbol not in alphabet or alternate_alphabet.
+        data = dna_to_bN([dna_s],alphabet,alternate_alphabet)[0]
          
         return self.extract_index(data,ec,erasures)
 
@@ -687,27 +687,27 @@ def longest_binder(a:str,b:str):
 
 
 
-def b32_to_DNA_optimize(file_data:list[ArrayLike],words:list[str], alternate_words:list[str], mask:Union[ArrayLike,None]=None, nmasked:int =-1, penalty_fn:Union[Callable[[str],int],None]=None)->list[Tuple[bytes,int]]:
+def b32_to_DNA_optimize(file_data:list[ArrayLike],alphabet:list[str], alternate_alphabet:list[str], mask:Union[ArrayLike,None]=None, nmasked:int =-1, penalty_fn:Union[Callable[[str],int],None]=None)->list[Tuple[bytes,int]]:
   """ 
     TODO: rename to bN_to_DNA_optimize, and add test.
     file_data: 2d list of integral types (symbols)
-    mask: list of ints. 0 for word, 1 for alternate word, -1 for don't care.  None for no mask.
-    nmasked: number of masked words.  -1 for all.
+    mask: list of ints. 0 for alphabet, 1 for alternate alphabet, -1 for don't care.  None for no mask.
+    nmasked: number of masked symbols.  -1 for all.
     penalty_fn: function that takes a DNA sequence and returns a score.  penalty_fn(DNA_seq:str)->int
   """      
   if nmasked<0: #mask all
-    return [b32_to_DNA_optimize_single(x,words,alternate_words,mask,penalty_fn=penalty_fn) for x in file_data]
+    return [b32_to_DNA_optimize_single(x,alphabet,alternate_alphabet,mask,penalty_fn=penalty_fn) for x in file_data]
   else:
-      masked_part = [b32_to_DNA_optimize_single(x,words,alternate_words,mask,penalty_fn=penalty_fn) for x in file_data[0:nmasked]]
-      unmasked_part = [b32_to_DNA_optimize_single(x,words,alternate_words,mask=None,penalty_fn=penalty_fn) for x in file_data[nmasked:]]
+      masked_part = [b32_to_DNA_optimize_single(x,alphabet,alternate_alphabet,mask,penalty_fn=penalty_fn) for x in file_data[0:nmasked]]
+      unmasked_part = [b32_to_DNA_optimize_single(x,alphabet,alternate_alphabet,mask=None,penalty_fn=penalty_fn) for x in file_data[nmasked:]]
       return masked_part + unmasked_part
 
 
-def b32_to_DNA_optimize_single(strand_data:ArrayLike, words:list[str], alternate_words:list[str], mask:Union[ArrayLike,None]=None ,penalty_fn=None)->Tuple[bytes,int]:
+def b32_to_DNA_optimize_single(strand_data:ArrayLike, alphabet:list[str], alternate_alphabet:list[str], mask:Union[ArrayLike,None]=None ,penalty_fn=None)->Tuple[bytes,int]:
   """
     TODO: rename to bN_to_DNA_optimize_single
     strand_data: 1d list of integral types
-    mask: list of ints. 0 for word, 1 for alternate word, -1 for don't care.  None for no mask.
+    mask: list of ints. 0 for alphabet, 1 for alternate alphabet, -1 for don't care.  None for no mask.
   """
   strand_data = np.array(strand_data)
   
@@ -723,10 +723,10 @@ def b32_to_DNA_optimize_single(strand_data:ArrayLike, words:list[str], alternate
     mask = np.zeros(len(strand_data),dtype=np.uint8)
     mutable_ind = np.arange(len(strand_data))
     
-  words_lookup = np.array(list(zip(words,alternate_words)),dtype="S")
+  alphabet_lookup = np.array(list(zip(alphabet,alternate_alphabet)),dtype="S")
   picks = np.zeros(len(strand_data),dtype=np.uint8)
   picks[0:len(mask)] = mask
-  dna_seq = b"".join(words_lookup[strand_data,picks])
+  dna_seq = b"".join(alphabet_lookup[strand_data,picks])
   if penalty_fn is None:
      return dna_seq,0
   score = penalty_fn(dna_seq)
@@ -741,7 +741,7 @@ def b32_to_DNA_optimize_single(strand_data:ArrayLike, words:list[str], alternate
     for i in mutable_ind:
       new_picks = picks.copy()
       new_picks[i] = not new_picks[i]
-      new_dna_seq = b"".join(words_lookup[strand_data,new_picks])
+      new_dna_seq = b"".join(alphabet_lookup[strand_data,new_picks])
       new_score = penalty_fn(new_dna_seq)
       if new_score < iteration_best_score:
         iteration_best_picks = new_picks
@@ -759,11 +759,11 @@ def b32_to_DNA_optimize_single(strand_data:ArrayLike, words:list[str], alternate
     
   return dna_seq,score
 
-def b32_to_DNA(file_data:list[list[int]],words:list[str], alternate_words:list[str], avoid_seq:list[str] = [])->list[str]:
+def b32_to_DNA(file_data:list[list[int]],alphabet:list[str], alternate_alphabet:list[str], avoid_seq:list[str] = [])->list[str]:
     """ with avoids, TODO: depricate """
     dna = []
     for strand in file_data:
-        _t = [words[x] for x in strand]
+        _t = [alphabet[x] for x in strand]
         _s = "".join(_t)
         ind,l = find_avoid(_s,avoid_seq)
         _last_s = ""
@@ -773,7 +773,7 @@ def b32_to_DNA(file_data:list[list[int]],words:list[str], alternate_words:list[s
                 rep_index =ind//3
             else:
                 rep_index = ind//3+1
-            _t[rep_index] = alternate_words[strand[rep_index]]
+            _t[rep_index] = alternate_alphabet[strand[rep_index]]
             _last_s = _s
             _s= "".join(_t)
             if _last_s == _s:
@@ -783,39 +783,39 @@ def b32_to_DNA(file_data:list[list[int]],words:list[str], alternate_words:list[s
         dna.append(_s)
     return dna
 
-def dna_to_bN(dna: Union[list[str],list[bytes]] ,words:list[str], alternate_words:list[str])->list[list[int]]:
+def dna_to_bN(dna: Union[list[str],list[bytes]] ,alphabet:list[str], alternate_alphabet:list[str])->list[list[int]]:
     """ takes a list of strings and converts them to a list of lists of base N ints"""
 
     if isinstance(dna[0],bytes): #assume the rest are bytes too.
         dna = [x.decode() for x in typing.cast(list[bytes],dna)]
 
-    wordlen = len(words[0])
+    symbol_len = len(alphabet[0])
     #build the reverse lookup table
     bNlut = {}
-    for ind in range(len(words)):
-        bNlut[words[ind]] = ind
-        bNlut[alternate_words[ind]] = ind
+    for ind in range(len(alphabet)):
+        bNlut[alphabet[ind]] = ind
+        bNlut[alternate_alphabet[ind]] = ind
 
 
     bNdatalist:list[list[int]] = []
     for d in dna:
         bNdata:list[int] = []
-        for ind in range(0,len(d),wordlen):
-            w = d[ind:ind+wordlen] 
+        for ind in range(0,len(d),symbol_len):
+            w = d[ind:ind+symbol_len] 
             bNdata.append(bNlut[w])
         bNdatalist.append(bNdata)
     return bNdatalist
 
-def dna_to_b32(dna: Union[list[str],list[bytes]] ,words:list[str], alternate_words:list[str])->list[list[int]]:
-    assert len(words) == 32
-    return dna_to_bN(dna,words,alternate_words)
+def dna_to_b32(dna: Union[list[str],list[bytes]] ,alphabet:list[str], alternate_alphabet:list[str])->list[list[int]]:
+    assert len(alphabet) == 32
+    return dna_to_bN(dna,alphabet,alternate_alphabet)
 
 
 def __is_pow_two(n: int):
     """Returns if a number is a power of two."""
     return (n > 0) and ((n & ( ~(n-1) )) == n)
 
-def dna_to_bytes(dna_seq: str, words: list[str]=_default_b32_alphabet, alternate_words: list[str]=_default_b32_alphabet) ->  tuple[bytes, list[int]]:
+def dna_to_bytes(dna_seq: str, alphabet: list[str]=_default_b32_alphabet, alternate_alphabet: list[str]=_default_b32_alphabet) ->  tuple[bytes, list[int]]:
     """Convert a DNA sequence to bytes with zero padding.
 
     This function takes a DNA sequence and converts it into a byte representation.
@@ -825,39 +825,39 @@ def dna_to_bytes(dna_seq: str, words: list[str]=_default_b32_alphabet, alternate
 
     Args:
         dna_seq (str): The DNA sequence to be converted.
-        words (list[str]): The primary set of base words used, in order, for encoding.
-        alternate_words (list[str]): The alternate (aka synonymous) set of words used, in order, for encoding.
+        alphabet (list[str]): The primary set of base alphabet used, in order, for encoding.
+        alternate_alphabet (list[str]): The alternate (aka synonymous) alphabet used, in order, for encoding.
 
     Returns:
         bytes: The byte representation of the DNA sequence.
-        list[int]: a mask for alternate words.  0 for word, 1 for alternate word, -1 for don't care.
+        list[int]: a mask for alternate symbols.  0 for symbol from alphabet, 1 for symbol from alternate alphabet, -1 for don't care.
     """
-    if len(words) != len(alternate_words):
-        raise ValueError("words and alternate_words must be the same length")
-    if len(words) < 2:
-        raise ValueError("words and alternate_words must be at least 2 long")
-    if len(dna_seq) % len(words[0]) != 0:
-        raise ValueError("DNA sequence length must be a multiple of the word length")
+    if len(alphabet) != len(alternate_alphabet):
+        raise ValueError("alphabet and alternate_alphabet must be the same length")
+    if len(alphabet) < 2:
+        raise ValueError("alphabet and alternate_alphabet must be at least 2 long")
+    if len(dna_seq) % len(alphabet[0]) != 0:
+        raise ValueError("DNA sequence length must be a multiple of the symbol length")
 
-    base = len(words)
-    word_len = len(words[0])
+    base = len(alphabet)
+    symbol_len = len(alphabet[0])
 
     #create a mask for the DNA sequence
-    mask = [0]*(len(dna_seq)//word_len)
+    mask = [0]*(len(dna_seq)//symbol_len)
     for i in range(len(mask)):
-        word = dna_seq[i*word_len:(i+1)*word_len]
-        if word in words:
+        symbol = dna_seq[i*symbol_len:(i+1)*symbol_len]
+        if symbol in alphabet:
             mask[i] = 0
-        elif word in alternate_words:
+        elif symbol in alternate_alphabet:
             mask[i] = 1
         else:
-            raise ValueError("DNA sequence contains invalid word: {}".format(word))
+            raise ValueError("DNA sequence contains invalid symbol: {}".format(symbol))
 
     #convert the DNA sequence to base N
-    bN_seq = dna_to_bN([dna_seq], words, alternate_words)[0]
+    bN_seq = dna_to_bN([dna_seq], alphabet, alternate_alphabet)[0]
     int_value = _baseN_to_int(bN_seq, base)
-    num_words = len(dna_seq)/len(words[0])
-    num_bits = num_words * np.log2(base)
+    num_alphabet = len(dna_seq)/len(alphabet[0])
+    num_bits = num_alphabet * np.log2(base)
     if __is_pow_two(base):
         num_bits = int(np.round(num_bits)) #just incase log2 returns with a rounding error.
     else:

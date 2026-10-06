@@ -28,8 +28,8 @@ def encode_decode(index_type,index_loc:Literal["beginning","middle"]="middle"):
   assert c.extract_index(coded[27]) == 27 #test extract index while we're at it
   dnadata = syncoder.b32_to_DNA(coded,syncoder._default_b32_alphabet,syncoder._default_b32_alphabet_alt)
   assert c.extract_index_dna(dnadata[27],
-                            words = syncoder._default_b32_alphabet,
-                            alternate_words= syncoder._default_b32_alphabet_alt,
+                            alphabet = syncoder._default_b32_alphabet,
+                            alternate_alphabet= syncoder._default_b32_alphabet_alt,
                             error_check=True) == 27
 
   random.shuffle(coded)
@@ -83,18 +83,18 @@ def test_coded_to_bases():
 def test_dna_to_bN():
   base = 47
   length = 4 # length>= log4(2*base)
-  allwords = list(product("ACTG", repeat=length))
-  allwords = [''.join(w) for w in allwords]
-  words = allwords[:base]
-  altwords = allwords[base:(2*base)]
+  all_symbols = list(product("ACTG", repeat=length))
+  all_symbols = [''.join(w) for w in all_symbols]
+  alphabet = all_symbols[:base]
+  alt_alphabet = all_symbols[base:(2*base)]
   data_seq = np.random.randint(0,base*2,(10,base-1))
   data = np.mod(data_seq,base)
   
   #"encode"
-  lut = np.array(words+altwords)
+  lut = np.array(alphabet+alt_alphabet)
   seqs = [lut[d] for d in data_seq]
   seqs = [''.join(seq) for seq in seqs]
-  decode_data = np.array(codec.dna_to_bN(seqs,words,altwords))
+  decode_data = np.array(codec.dna_to_bN(seqs,alphabet,alt_alphabet))
   assert np.array_equal(data, decode_data)
 
 def test_dna_to_bytes():
@@ -170,13 +170,13 @@ def test_nonzero_index():
   dna = codec.b32_to_DNA_optimize(enc_d,codec._default_b32_alphabet,codec._default_b32_alphabet_alt)  #type: ignore
 
   index = coder.extract_index_dna(dna[0][0],
-                                  words = syncoder._default_b32_alphabet,
-                                  alternate_words= syncoder._default_b32_alphabet_alt,
+                                  alphabet = syncoder._default_b32_alphabet,
+                                  alternate_alphabet= syncoder._default_b32_alphabet_alt,
                                   error_check=False)
   assert index == 2500
   offset = 5
   index = coder.extract_index_dna(dna[offset][0],
-                                  words = syncoder._default_b32_alphabet,
-                                  alternate_words= syncoder._default_b32_alphabet_alt,
+                                  alphabet = syncoder._default_b32_alphabet,
+                                  alternate_alphabet= syncoder._default_b32_alphabet_alt,
                                   error_check=False)
   assert index == 2500+offset
