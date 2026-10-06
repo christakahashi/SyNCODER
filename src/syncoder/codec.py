@@ -889,11 +889,11 @@ def insert_bytes(data:bytes, insert:bytes, chunk_len:int, num_inserts:int) -> by
     See also:
         remove_bytes: The inverse of this function.
     """
-    data = bytearray(data)
+    data_ba = bytearray(data)
     for i in range(num_inserts):
         ins_index = i * chunk_len
-        data[ins_index:ins_index] = insert
-    return bytes(data)
+        data_ba[ins_index:ins_index] = insert
+    return bytes(data_ba)
 
 def pad_data(data:bytes,block_size:int,padding_data:bytes|str = "random") -> bytes:
     """Pad data to a multiple of block_size.  The padding is added to the end of the data.
@@ -939,14 +939,14 @@ def remove_bytes(data:bytes, insert:int|bytes, chunk_len:int, num_inserts:int) -
     else:
         raise ValueError("insert must be a bytes or int")
     
-    data = bytearray(data)
+    data_ba = bytearray(data)
     for i in reversed(range(num_inserts)):
         ins_index = i * chunk_len
         if have_insert_seq:
-            if data[ins_index:ins_index + insert_len] != insert:
+            if data_ba[ins_index:ins_index + insert_len] != insert:
                 raise ValueError("insert bytes do not match bytes to be removed")
-        del data[ins_index:ins_index + insert_len]
-    return bytes(data)
+        del data_ba[ins_index:ins_index + insert_len]
+    return bytes(data_ba)
 
 
 ########################
