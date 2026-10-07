@@ -1,64 +1,23 @@
 import logging
 import typing
 import json
-from . import sector01
 from typing import Optional,Union, Callable, Tuple, Literal, cast  #requires python 3.8 or later
 from warnings import deprecated
 
-
 import numpy as np
 from numpy.typing import ArrayLike
+import galois
 
-import galois  
+from . import sector01
+from .CodecHelpers import *
 
 #### ROADMAP ####
 # - Strand prefix sub-encoder.
 # - Sample objective functions (at least minimize homopolymers and avoid annealing.)
 
-
 lipsum = b"Lorem ipsum dolor sit amet, consectetuer adipiscing elit. Aenean commodo ligula eget dolor. Aenean massa. Cum sociis natoque penatibus et magnis dis parturient montes, nascetur ridiculus mus. Donec quam felis, ultricies nec, pellentesque eu, pretium quis, sem. Nulla consequat massa quis enim. Donec pede justo, fringilla vel, aliquet nec, vulputate eget, arcu. In enim justo, rhoncus ut, imperdiet a, venenatis vitae, justo. Nullam dictum felis eu pede mollis pretium. Integer tincidunt. Cras dapibus. Vivamus elementum semper nisi. Aenean vulputate eleifend tellus. Aenean leo ligula, porttitor eu, consequat vitae, eleifend ac, enim. Aliquam lorem ante, dapibus in, viverra quis, feugiat a, tellus. Phasellus viverra nulla ut metus varius laoreet. Quisque rutrum. Aenean imperdiet. Etiam ultricies nisi vel augue. Curabitur ullamcorper ultricies nisi. Nam eget dui. Etiam rhoncus. Maecenas tempus, tellus eget condimentum rhoncus, sem quam semper libero, sit amet adipiscing sem neque sed ipsum." #cspell:disable-line
 logger = logging.getLogger(__name__)
 
-def _int_to_baseN(n:int,base:int,length:int=-1)->list[int]:
-    """Converts an integer to a base N number in little endian order.
-
-    Args:
-        n (int): The integer to be converted.
-        base (int): The base of the number system.
-        length (int, optional): If specified, the number will be zero padded to this length.
-
-    Returns:
-        list[int]: The list of digits representing the base N number.
-
-    """ 
-
-    digits = []
-    while n>0:
-        n,r = divmod(n,base)
-        digits.append(r)
-        
-    #do zero padding
-    while len(digits)<length: 
-        digits.append(0)
-    return digits
-
-def _baseN_to_int(digits: list[int], base: int) -> int:
-    """
-    Converts a base N number to an integer using little endian order.
-
-    Args:
-        digits (list[int]): The list of digits representing the base N number.
-        base (int): The base of the number.
-
-    Returns:
-        int: The converted integer value.
-
-    """
-
-    n = 0
-    for d in reversed(digits):
-        n = n*base + d
-    return n
 
 def compute_num_strands(nbytes:int, 
                  inner_alphabet_size:int=32, 
@@ -117,7 +76,7 @@ class BaseNBlockCodec:
                  max_strand_index:Optional[int]=None,
                  index_type:Literal["binary", "inner symbol", "inner"]="binary",
                  index_location:Literal["middle", "beginning", "end"]="middle",
-                 lazy_outer:bool = False): 
+                 lazy_outer:bool = False):
         """  
         Initialize the Codec object.
 
@@ -224,9 +183,9 @@ class BaseNBlockCodec:
         self.outer_d = n_redundant_strands+1
         self.outer_field = galois.GF(2**(self.outer_alphabet_size_bytes*8))
         if lazy_outer:
-            self.outer_coder_fast = None
+            self.outer_coder = None
         else:
-            self.outer_coder_fast = galois.ReedSolomon(n=2**(self.outer_alphabet_size_bytes*8)-1,
+            self.outer_coder = galois.ReedSolomon(n=2**(self.outer_alphabet_size_bytes*8)-1,
                                                        d=self.outer_d,
                                                        c=0,
                                                        field=self.outer_field)
@@ -363,8 +322,8 @@ class BaseNBlockCodec:
         #  |<rrrrrrrrrrrrrrrrr self.data_chunk_size rrrrrrrrrrrrraaaRRRRRRRR>|
 
         #lazy init outer code
-        if self.outer_coder_fast is None:
-            self.outer_coder_fast = galois.ReedSolomon(n=2**(self.outer_alphabet_size_bytes*8)-1,
+        if self.outer_coder is None:
+            self.outer_coder = galois.ReedSolomon(n=2**(self.outer_alphabet_size_bytes*8)-1,
                                                         d=self.outer_d,
                                                         c=0,
                                                         field=self.outer_field)
@@ -388,7 +347,7 @@ class BaseNBlockCodec:
             raise ValueError("Unsupported outer code byte size.")
 
         #2. apply the outer code (encode columns of data)
-        data_enc_cols = np.array([self.outer_coder_fast.encode(dc) for dc in data_np.transpose()],dtype=data_np.dtype)
+        data_enc_cols = np.array([self.outer_coder.encode(dc) for dc in data_np.transpose()],dtype=data_np.dtype)
 
         data_enc_chunks = data_enc_cols.transpose()
         
@@ -447,8 +406,8 @@ class BaseNBlockCodec:
         """
 
         #lazy init outer code
-        if self.outer_coder_fast is None:
-            self.outer_coder_fast = galois.ReedSolomon(n=2**(self.outer_alphabet_size_bytes*8)-1,
+        if self.outer_coder is None:
+            self.outer_coder = galois.ReedSolomon(n=2**(self.outer_alphabet_size_bytes*8)-1,
                                                         d=self.outer_d,
                                                         c=0,
                                                         field=self.outer_field)
@@ -521,7 +480,7 @@ class BaseNBlockCodec:
         erasures_bool = np.zeros(data_np_encoded.shape[1],dtype=bool)
         if has_erasuers:
             erasures_bool[erasures] = True
-        data_decoded_results = [self.outer_coder_fast.decode(dc,errors=True,erasures=erasures_bool) for dc in data_np_encoded]
+        data_decoded_results = [self.outer_coder.decode(dc,erasures=erasures_bool,errors=True) for dc in data_np_encoded]
         data_errata_col_pos = [] #galois doesn't report error positions
         data_num_errors = [int(x[1]) for x in data_decoded_results]
         if -1 in data_num_errors:
@@ -550,6 +509,7 @@ class BaseNBlockCodec:
         return data_decoded, erasures, data_num_errors, chunk_errors # pyright: ignore[reportPossiblyUnboundVariable] 
 
     
+    @_check_deprecated
     def extract_index_dna(self, dna: str|bytes, alphabet:list[str], alternate_alphabet:list[str], error_check: bool|Literal["erasures"] = False, padding: Literal["left","right"]="right") -> int:
         """
         Extracts the index from the given DNA strand.
@@ -669,21 +629,17 @@ def longest_match(a:str,b:str):
     B = b.upper()
     return max(_longest_match(A,B),_longest_match(B,A))
 
-#Returns the reverse complement of a DNA sequence.
-def reverse_complement(dna_sequence: str) -> str:
-    complement = {'A': 'T', 'T': 'A', 'C': 'G', 'G': 'C', 'a': 't', 't': 'a', 'c': 'g', 'g': 'c'}
-    reversed_sequence = dna_sequence[::-1]
-    reverse_complement_sequence = ''.join(complement[nucleotide] for nucleotide in reversed_sequence)
-    return reverse_complement_sequence
 
 def longest_binder(a:str,b:str):
   A = reverse_complement(a) 
   return longest_match(A,b)
 
 @deprecated("Use bN_to_DNA_optimize instead")
+@_check_deprecated
 def b32_to_DNA_optimize(file_data:list[ArrayLike],alphabet:list[str], alternate_alphabet:list[str], mask:Union[ArrayLike,None]=None, nmasked:int =-1, penalty_fn:Union[Callable[[str],int],None]=None)->list[Tuple[bytes,int]]:
     return bN_to_DNA_optimize(file_data,alphabet,alternate_alphabet,mask,nmasked,penalty_fn)
 
+@_check_deprecated
 def bN_to_DNA_optimize(file_data:list[ArrayLike],alphabet:list[str], alternate_alphabet:list[str], mask:Union[ArrayLike,None]=None, nmasked:int =-1, penalty_fn:Union[Callable[[str],int],None]=None)->list[Tuple[bytes,int]]:
   """ 
     Convert a list of lists of in base N to DNA.  The base (N) is determined by the length of the alphabet.
@@ -702,9 +658,11 @@ def bN_to_DNA_optimize(file_data:list[ArrayLike],alphabet:list[str], alternate_a
       return masked_part + unmasked_part
 
 @deprecated("Use bN_to_DNA_optimize_single instead")
+@_check_deprecated
 def b32_to_DNA_optimize_single(strand_data:ArrayLike, alphabet:list[str], alternate_alphabet:list[str], mask:Union[ArrayLike,None]=None ,penalty_fn=None)->Tuple[bytes,int]:
   return bN_to_DNA_optimize_single(strand_data, alphabet, alternate_alphabet, mask, penalty_fn)
 
+@_check_deprecated
 def bN_to_DNA_optimize_single(strand_data:ArrayLike, alphabet:list[str], alternate_alphabet:list[str], mask:Union[ArrayLike,None]=None ,penalty_fn=None)->Tuple[bytes,int]:
   """
     strand_data: 1d list of integral types
@@ -761,6 +719,7 @@ def bN_to_DNA_optimize_single(strand_data:ArrayLike, alphabet:list[str], alterna
   return dna_seq,score
 
 @deprecated("Use bN_to_DNA_optimize instead")
+@_check_deprecated
 def b32_to_DNA(file_data:list[list[int]],alphabet:list[str], alternate_alphabet:list[str], avoid_seq:list[str] = [])->list[str]:
     """ with avoids, TODO: depricate """
     dna = []
@@ -785,6 +744,7 @@ def b32_to_DNA(file_data:list[list[int]],alphabet:list[str], alternate_alphabet:
         dna.append(_s)
     return dna
 
+@_check_deprecated
 def dna_to_bN(dna: Union[list[str],list[bytes]] ,alphabet:list[str], alternate_alphabet:list[str])->list[list[int]]:
     """ takes a list of strings and converts them to a list of lists of base N ints"""
 
@@ -809,15 +769,13 @@ def dna_to_bN(dna: Union[list[str],list[bytes]] ,alphabet:list[str], alternate_a
     return bNdatalist
 
 @deprecated("Use dna_to_bN instead")
+@_check_deprecated
 def dna_to_b32(dna: Union[list[str],list[bytes]] ,alphabet:list[str], alternate_alphabet:list[str])->list[list[int]]:
     assert len(alphabet) == 32
     return dna_to_bN(dna,alphabet,alternate_alphabet)
 
 
-def __is_pow_two(n: int):
-    """Returns if a number is a power of two."""
-    return (n > 0) and ((n & ( ~(n-1) )) == n)
-
+@_check_deprecated
 def dna_to_bytes(dna_seq: str, alphabet: list[str]=_default_b32_alphabet, alternate_alphabet: list[str]=_default_b32_alphabet) ->  tuple[bytes, list[int]]:
     """Convert a DNA sequence to bytes with zero padding.
 
@@ -861,7 +819,7 @@ def dna_to_bytes(dna_seq: str, alphabet: list[str]=_default_b32_alphabet, altern
     int_value = _baseN_to_int(bN_seq, base)
     num_alphabet = len(dna_seq)/len(alphabet[0])
     num_bits = num_alphabet * np.log2(base)
-    if __is_pow_two(base):
+    if _is_pow_two(base):
         num_bits = int(np.round(num_bits)) #just incase log2 returns with a rounding error.
     else:
         num_bits = int(np.ceil(num_bits))
