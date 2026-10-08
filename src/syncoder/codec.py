@@ -76,6 +76,7 @@ class BaseNBlockCodec:
                  max_strand_index:Optional[int]=None,
                  index_type:Literal["binary", "inner symbol", "inner"]="binary",
                  index_location:Literal["middle", "beginning", "end"]="middle",
+                 outer_codec:Literal["galois","leopard"]="galois",
                  lazy_outer:bool = False):
         """  
         Initialize the Codec object.
@@ -96,14 +97,29 @@ class BaseNBlockCodec:
                 index_location "middle" (default) places the index after the data symbols but before the redundancy symbols.
                 index_location "beginning" places the index before the data symbols.
                 index_location "end" places the index after the redundancy symbols. (not implemented)
+            outer_codec (str): Outer codec to use. Options: "galois", "leopard". Default: "galois".
+                outer_codec ("galois") uses the galois library for the outer Reed Solomon code.
+                outer_codec ("leopard") uses the FFT-based eeLeopard library for the outer Reed Solomon code.  
+                            This is faster for large n_strands (up to 2^16) but not compatible with the galois implementation.
+                            Not all combinations of n_strands and n_redundant_strands are supported.
+                            Must satisfy: n_strands <= 2**16 - 2**ceil(log2(n_strands-n_redundant_strands))
             lazy_outer (bool): If True, the outer code will be initialized lazily. Default: False.
         """
         if n_strands<=255:
             self.outer_alphabet_size_bytes = 1
         else:
             self.outer_alphabet_size_bytes = 2 
-        if n_strands>(2**(8*self.outer_alphabet_size_bytes)-1):
+        
+        if (outer_codec == "galois") and (n_strands > 2**(8*self.outer_alphabet_size_bytes)-1):
             raise ValueError("Too many strands for outer code.")
+        if outer_codec == "leopard":
+            if eeleopard_available is False:
+                raise ValueError("eeLeopard library not available.  Please install eeLeopard to use leopard outer code.")
+            if n_strands <= 2**16 - 2**np.ceil(np.log2(n_strands-n_redundant_strands)).astype(int):
+                raise ValueError("n_strands and n_redundant_strands combination not supported by leopard outer code." + \
+                                 "  Must satisfy: n_strands <= 2**16 - 2**ceil(log2(n_strands-n_redundant_strands))" + \
+                                    f"  n_strands={n_strands}, n_redundant_strands={n_redundant_strands}" + \
+                                    f"2**16 - 2**ceil(log2(n_strands-n_redundant_strands))={2**16 - 2**np.ceil(np.log2(n_strands-n_redundant_strands)).astype(int)}")
         self.n_strands = n_strands
         if max_strand_index is None:
             max_strand_index = n_strands
@@ -180,15 +196,20 @@ class BaseNBlockCodec:
         #c=0 to match reedsolo library's default for code compatibility with prior versions of this codec.
         #   This may be changed in a future major version.
 
-        self.outer_d = n_redundant_strands+1
-        self.outer_field = galois.GF(2**(self.outer_alphabet_size_bytes*8))
-        if lazy_outer:
-            self.outer_coder = None
-        else:
-            self.outer_coder = galois.ReedSolomon(n=2**(self.outer_alphabet_size_bytes*8)-1,
-                                                       d=self.outer_d,
-                                                       c=0,
-                                                       field=self.outer_field)
+        if outer_codec == "leopard":
+            self.outer_coder = WrappedLeopard(n=self.n_strands,
+                                              k=self.n_strands-n_redundant_strands,
+                                              m=8*self.outer_alphabet_size_bytes)
+        elif outer_codec == "galois":
+            self.outer_d = n_redundant_strands+1
+            self.outer_field = galois.GF(2**(self.outer_alphabet_size_bytes*8))
+            if lazy_outer:
+                self.outer_coder = None
+            else:
+                self.outer_coder = galois.ReedSolomon(n=2**(self.outer_alphabet_size_bytes*8)-1,
+                                                      d=self.outer_d,
+                                                      c=0,
+                                                      field=self.outer_field)
 
     def __compute_waste(self):
         k = self.inner_k

@@ -1,5 +1,6 @@
 import random
 import numpy as np
+import pytest
 from itertools import product
 from typing import Literal
 
@@ -68,6 +69,31 @@ def test_encode_decode_fast_erase():
   #check inner_n is causing the correct number of bases
   assert len(coded[0]) == 30 
 
+def test_encode_decode_leopard():
+  pytest.importorskip("eeleopard")
+  pct_redundant = 0.1 #<0.125=2**13/2**16
+  k = 2**16-2**13 #msg length
+  n_red = np.floor(k*pct_redundant).astype(int) #parody length
+  n_strands = k+n_red #codeword length
+  coder = codec.BaseNBlockCodec(inner_alphabet_size=128,
+                                inner_d=5,
+                                inner_n=52,
+                                n_strands=n_strands,
+                                n_redundant_strands=n_red,
+                                outer_codec="leopard")
+  data = np.random.bytes(coder.block_capacity_bytes)
+
+  encoded = np.array(coder.encode(data),dtype=np.uint16)
+  corrupt = encoded.copy()  
+  s = random.sample(range(len(corrupt)),100)
+  w = random.sample(range(len(corrupt[0])),2) 
+  for si in s:
+    for wi in w:
+      corrupt[si,wi] ^= np.random.randint(1,128) #corrupt a few bits in each of 100 strands
+
+  assert len(encoded) == coder.n_strands
+  assert coder.decode(corrupt.tolist())[0] == data
+
 def test_coded_to_bases():
   #TODO: test optimize too
 
@@ -118,6 +144,7 @@ def test_dna_to_bytes():
   
   dna_baseN = _int_to_baseN(int.from_bytes(dna_bytes,"little"),len(alphabet))
   #TODO: this can fail but only for some inputs randomly selected lookinto why.
+  # I think i fixed this.
   assert dna_baseN == answer32
 
   _t = np.array(dna_baseN)
