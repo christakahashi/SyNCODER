@@ -110,9 +110,11 @@ class BaseNBlockCodec:
         else:
             self.outer_alphabet_size_bytes = 2 
         
-        if (outer_codec == "galois") and (n_strands > 2**(8*self.outer_alphabet_size_bytes)-1):
+        self.outer_codec_name = outer_codec
+        del outer_codec # remove to avoid confusion with self.outer_coder
+        if (self.outer_codec_name == "galois") and (n_strands > 2**(8*self.outer_alphabet_size_bytes)-1):
             raise ValueError("Too many strands for outer code.")
-        if outer_codec == "leopard":
+        if self.outer_codec_name == "leopard":
             if eeleopard_available is False:
                 raise ValueError("eeLeopard library not available.  Please install eeLeopard to use leopard outer code.")
             if n_strands <= 2**16 - 2**np.ceil(np.log2(n_strands-n_redundant_strands)).astype(int):
@@ -196,12 +198,12 @@ class BaseNBlockCodec:
         #c=0 to match reedsolo library's default for code compatibility with prior versions of this codec.
         #   This may be changed in a future major version.
 
-        if outer_codec == "leopard":
+        self.outer_d = n_redundant_strands+1
+        if self.outer_codec_name == "leopard":
             self.outer_coder = WrappedLeopard(n=self.n_strands,
                                               k=self.n_strands-n_redundant_strands,
                                               m=8*self.outer_alphabet_size_bytes)
-        elif outer_codec == "galois":
-            self.outer_d = n_redundant_strands+1
+        elif self.outer_codec_name == "galois":
             self.outer_field = galois.GF(2**(self.outer_alphabet_size_bytes*8))
             if lazy_outer:
                 self.outer_coder = None

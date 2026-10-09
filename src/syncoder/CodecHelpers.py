@@ -6,8 +6,7 @@ from typing import Callable
 import numpy as np
 
 __all__ = ["reverse_complement", "_int_to_baseN", "_baseN_to_int", \
-           "_check_deprecated", "_is_pow_two", "eeleopard_available", \
-           "WrappedLeopard"]
+           "_check_deprecated", "_is_pow_two", "eeleopard_available"]
 
 
 def _is_pow_two(n: int):
@@ -112,4 +111,5 @@ if eeleopard_available:
             orig_codeword = np.concatenate((ecc,data))
             dec_result = super().decode(orig_codeword, erasures,**kwargs)
             return (dec_result.message, dec_result.num_errors,dec_result.error_positions)
-        
+
+    __all__.append( "WrappedLeopard" )
